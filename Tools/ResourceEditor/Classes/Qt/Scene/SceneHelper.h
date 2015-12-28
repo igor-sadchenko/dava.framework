@@ -35,25 +35,28 @@
 #include "Render/Texture.h"
 #include "FileSystem/FilePath.h"
 
-class SceneHelper
+namespace SceneHelper
 {
-public:
-    enum TexturesEnumerateMode
+    enum class TexturesEnumerateMode : DAVA::uint8
     {
-        EXCLUDE_NULL,
+        EXCLUDE_NULL = 0,
         INCLUDE_NULL
     };
 
-    static void EnumerateEntityTextures(DAVA::Scene *forScene, DAVA::Entity *forNode, DAVA::TexturesMap &textureCollection, TexturesEnumerateMode mode);
-	static void EnumerateSceneTextures(DAVA::Scene *forScene, DAVA::TexturesMap &textures, TexturesEnumerateMode mode);
-	static void EnumerateMaterialInstances(DAVA::Entity *forNode, DAVA::Vector<DAVA::NMaterial *> &materials);
+    void EnumerateSceneTextures(DAVA::Scene* forScene, DAVA::TexturesMap& textures, TexturesEnumerateMode mode);
+    void EnumerateEntityTextures(DAVA::Scene* forScene, DAVA::Entity* forNode, DAVA::TexturesMap& textureCollection, TexturesEnumerateMode mode);
 
-	static DAVA::int32 EnumerateModifiedTextures(DAVA::Scene *forScene, DAVA::Map<DAVA::Texture *, DAVA::Vector< DAVA::eGPUFamily> > &textures);
+    // enumerates materials from render batches and their parents
+    void EnumerateMaterials(DAVA::Entity* forNode, DAVA::Set<DAVA::NMaterial*>& materials);
 
-    static DAVA::Entity * CloneEntityWithMaterials(DAVA::Entity *fromNode);
+    // enumerates only materials from render batches
+    void EnumerateMaterialInstances(DAVA::Entity* forNode, DAVA::Set<DAVA::NMaterial*>& materials);
 
-protected:
-	static void CollectTextures(const DAVA::NMaterial *material, DAVA::TexturesMap &textures, TexturesEnumerateMode mode);
+    DAVA::int32 EnumerateModifiedTextures(DAVA::Scene* forScene, DAVA::Map<DAVA::Texture*, DAVA::Vector<DAVA::eGPUFamily>>& textures);
+
+    DAVA::Entity* CloneEntityWithMaterials(DAVA::Entity* fromNode);
+
+    void BuildMaterialList(DAVA::Entity* forNode, DAVA::Set<DAVA::NMaterial*>& materialList, bool includeRuntime = true);
 };
 
 #endif // __SCENE_HELPER_H__

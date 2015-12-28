@@ -29,58 +29,76 @@
 
 #include "PreviewWidget.h"
 
-#include "PreviewModel.h"
-
-#include "EditScreen.h"
-#include "SharedData.h"
+#include "ScrollAreaController.h"
 
 #include <QLineEdit>
 #include <QScreen>
-#include <QMessageBox>
-
-#include "Model/PackageHierarchy/ControlNode.h"
+#include <QMenu>
+#include <QShortCut>
+#include "UI/UIControl.h"
+#include "UI/UIScreenManager.h"
 
 #include "QtTools/DavaGLWidget/davaglwidget.h"
 
+#include "Document.h"
+
+#include "EditorSystems/CanvasSystem.h"
+#include "EditorSystems/HUDSystem.h"
+#include "Ruler/RulerWidget.h"
+#include "Ruler/RulerController.h"
+
 using namespace DAVA;
 
-static const int SCALE_PERCENTAGES[] =
+namespace
 {
-    10,  25,  50,  75,
-	100, 125, 150, 175,
-    200, 250, 400, 800,
+QString ScaleStringFromReal(qreal scale)
+{
+    return QString("%1 %").arg(static_cast<int>(scale * 100.0f + 0.5f));
+}
+
+struct PreviewContext : WidgetContext
+{
+    QPoint canvasPosition;
 };
+}
 
-static const int32 DEFAULT_SCALE_PERCENTAGE_INDEX = 4; // 100%
-static const char* PERCENTAGE_FORMAT = "%1 %";
-
-PreviewWidget::PreviewWidget(QWidget *parent)
+PreviewWidget::PreviewWidget(QWidget* parent)
     : QWidget(parent)
-    , sharedData(nullptr)
-    , model(new PreviewModel(this))
+    , scrollAreaController(new ScrollAreaController(this))
+    , rulerController(new RulerController(this))
 {
+    percentages << 0.25f << 0.33f << 0.50f << 0.67f << 0.75f << 0.90f
+                << 1.00f << 1.10f << 1.25f << 1.50f << 1.75f << 2.00f
+                << 2.50f << 3.00f << 4.00f << 5.00f << 6.00f << 7.00f << 8.00f;
     setupUi(this);
+
+    connect(this, &PreviewWidget::ScaleChanged, rulerController, &RulerController::SetScale);
+    connect(rulerController, &RulerController::HorisontalRulerSettingsChanged, horizontalRuler, &RulerWidget::OnRulerSettingsChanged);
+    connect(rulerController, &RulerController::VerticalRulerSettingsChanged, verticalRuler, &RulerWidget::OnRulerSettingsChanged);
+
+    connect(rulerController, &RulerController::HorisontalRulerMarkPositionChanged, horizontalRuler, &RulerWidget::OnMarkerPositionChanged);
+    connect(rulerController, &RulerController::VerticalRulerMarkPositionChanged, verticalRuler, &RulerWidget::OnMarkerPositionChanged);
+
+    connect(scrollAreaController, &ScrollAreaController::NestedControlPositionChanged, this, &PreviewWidget::OnNestedControlPositionChanged);
+
+
+    verticalRuler->SetRulerOrientation(Qt::Vertical);
     davaGLWidget = new DavaGLWidget();
     frame->layout()->addWidget(davaGLWidget);
+    davaGLWidget->GetGLView()->installEventFilter(this);
 
-    ScopedPtr<UIScreen> davaUIScreen(new DAVA::UIScreen());
-    davaUIScreen->GetBackground()->SetDrawType(UIControlBackground::DRAW_FILL);
-    davaUIScreen->GetBackground()->SetColor(DAVA::Color(0.3f, 0.3f, 0.3f, 1.0f));
-    UIScreenManager::Instance()->RegisterScreen(EDIT_SCREEN, davaUIScreen);
-    UIScreenManager::Instance()->SetFirst(EDIT_SCREEN);
-    UIScreenManager::Instance()->GetScreen()->AddControl(model->GetViewControl());
-    
     davaGLWidget->setMaximumSize(QWIDGETSIZE_MAX, QWIDGETSIZE_MAX);
-    model->SetViewControlSize(davaGLWidget->size());
 
     connect( davaGLWidget, &DavaGLWidget::Resized, this, &PreviewWidget::OnGLWidgetResized );
-
     // Setup the Scale Combo.
-    int scalesCount = COUNT_OF(SCALE_PERCENTAGES);
-    for (int i = 0; i < scalesCount; i ++)
+    for (auto percentage : percentages)
     {
-        scaleCombo->addItem(QString(PERCENTAGE_FORMAT).arg(SCALE_PERCENTAGES[i]));
+        scaleCombo->addItem(ScaleStringFromReal(percentage));
     }
+    connect(scrollAreaController, &ScrollAreaController::ViewSizeChanged, this, &PreviewWidget::UpdateScrollArea);
+    connect(scrollAreaController, &ScrollAreaController::CanvasSizeChanged, this, &PreviewWidget::UpdateScrollArea);
+    connect(scrollAreaController, &ScrollAreaController::PositionChanged, this, &PreviewWidget::OnPositionChanged);
+    connect(scrollAreaController, &ScrollAreaController::ScaleChanged, this, &PreviewWidget::OnScaleChanged);
 
     connect(scaleCombo, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged), this, &PreviewWidget::OnScaleByComboIndex);
     connect(scaleCombo->lineEdit(), &QLineEdit::editingFinished, this, &PreviewWidget::OnScaleByComboText);
@@ -88,239 +106,374 @@ PreviewWidget::PreviewWidget(QWidget *parent)
     connect(verticalScrollBar, &QScrollBar::valueChanged, this, &PreviewWidget::OnVScrollbarMoved);
     connect(horizontalScrollBar, &QScrollBar::valueChanged, this, &PreviewWidget::OnHScrollbarMoved);
 
-    scaleCombo->setCurrentIndex(DEFAULT_SCALE_PERCENTAGE_INDEX);
-    scaleCombo->lineEdit()->setMaxLength(6);
+    scaleCombo->setCurrentIndex(percentages.indexOf(1.00f)); //100%
+    QRegExp regEx("[0-8]?([0-9]|[0-9]){0,2}\\s?\\%?");
+    scaleCombo->setValidator(new QRegExpValidator(regEx));
     scaleCombo->setInsertPolicy(QComboBox::NoInsert);
-      
-    connect(davaGLWidget->GetGLWindow(), &QWindow::screenChanged, this, &PreviewWidget::OnMonitorChanged);
+    UpdateScrollArea();
 
-    connect(model, &PreviewModel::CanvasOrViewChanged, this, &PreviewWidget::OnScrollAreaChanged);
-    connect(model, &PreviewModel::CanvasPositionChanged, this, &PreviewWidget::OnScrollPositionChanged);
-    connect(model, &PreviewModel::CanvasScaleChanged, this, &PreviewWidget::OnCanvasScaleChanged);
+    QAction* importPackageAction = new QAction(tr("Import package"), this);
+    importPackageAction->setShortcut(QKeySequence::New);
+    importPackageAction->setShortcutContext(Qt::WindowShortcut);
+    connect(importPackageAction, &QAction::triggered, this, &PreviewWidget::ImportRequested);
+    davaGLWidget->addAction(importPackageAction);
 
-    connect(model, &PreviewModel::ControlNodeSelected, this, &PreviewWidget::OnControlNodeSelected);
-    connect(model, &PreviewModel::ErrorOccurred, this, &PreviewWidget::OnError);
+    QAction* cutAction = new QAction(tr("Cut"), this);
+    cutAction->setShortcut(QKeySequence::Cut);
+    cutAction->setShortcutContext(Qt::WindowShortcut);
+    connect(cutAction, &QAction::triggered, this, &PreviewWidget::CutRequested);
+    davaGLWidget->addAction(cutAction);
+
+    QAction* copyAction = new QAction(tr("Copy"), this);
+    copyAction->setShortcut(QKeySequence::Copy);
+    copyAction->setShortcutContext(Qt::WindowShortcut);
+    connect(copyAction, &QAction::triggered, this, &PreviewWidget::CopyRequested);
+    davaGLWidget->addAction(copyAction);
+
+    QAction* pasteAction = new QAction(tr("Paste"), this);
+    pasteAction->setShortcut(QKeySequence::Paste);
+    pasteAction->setShortcutContext(Qt::WindowShortcut);
+    connect(pasteAction, &QAction::triggered, this, &PreviewWidget::PasteRequested);
+    davaGLWidget->addAction(pasteAction);
+
+    QAction* deleteAction = new QAction(tr("Delete"), this);
+    deleteAction->setShortcut(QKeySequence::Delete);
+    deleteAction->setShortcutContext(Qt::WindowShortcut); //widget shortcut is not working for davaGLWidget
+    connect(deleteAction, &QAction::triggered, this, &PreviewWidget::DeleteRequested);
+    davaGLWidget->addAction(deleteAction);
+
+    QAction* selectAllAction = new QAction(tr("Select all"), this);
+    selectAllAction->setShortcut(QKeySequence::SelectAll);
+    selectAllAction->setShortcutContext(Qt::WindowShortcut);
+    connect(selectAllAction, &QAction::triggered, this, &PreviewWidget::SelectAllRequested);
+    davaGLWidget->addAction(selectAllAction);
+
+    QAction* focusNextChildAction = new QAction(tr("Focus next child"), this);
+    focusNextChildAction->setShortcut(Qt::Key_Tab);
+    focusNextChildAction->setShortcutContext(Qt::WindowShortcut);
+    connect(focusNextChildAction, &QAction::triggered, this, &PreviewWidget::FocusNextChild);
+    davaGLWidget->addAction(focusNextChildAction);
+
+    QAction* focusPreviousChildAction = new QAction(tr("Focus frevious child"), this);
+    focusPreviousChildAction->setShortcut(Qt::ShiftModifier + Qt::Key_Tab);
+    focusPreviousChildAction->setShortcutContext(Qt::WindowShortcut);
+    connect(focusPreviousChildAction, &QAction::triggered, this, &PreviewWidget::FocusPreviousChild);
+    davaGLWidget->addAction(focusPreviousChildAction);
 }
 
-DavaGLWidget *PreviewWidget::GetDavaGLWidget()
+ScrollAreaController* PreviewWidget::GetScrollAreaController()
 {
-    return davaGLWidget;
+    return scrollAreaController;
 }
 
-void PreviewWidget::OnDocumentChanged(SharedData *data)
+RulerController* PreviewWidget::GetRulerController()
 {
-    if (sharedData == data)
-    {
-        return;
-    }
-    sharedData = data;
-
-    UpdateSelection();
-    if (nullptr != sharedData)
-    {
-        OnScrollAreaChanged(model->GetViewSize(), model->GetScaledCanvasSize());
-        OnScrollPositionChanged(model->GetCanvasPosition());
-        OnCanvasScaleChanged(model->GetCanvasScale());
-        OnMonitorChanged();
-        //restore activated controls
-    }
+    return rulerController;
 }
 
-void PreviewWidget::OnDataChanged(const QByteArray &role)
+float PreviewWidget::GetScale() const
 {
-    if (role == "selection")
-    {
-        UpdateSelection();
-    }
+    // Firstly verify whether the value is already set.
+    QString curTextValue = scaleCombo->currentText();
+    curTextValue.remove('%');
+    curTextValue.remove(' ');
+    bool ok;
+    float scaleValue = curTextValue.toFloat(&ok);
+    DVASSERT_MSG(ok, "can not parse text to float");
+    return scaleValue;
 }
 
-void PreviewWidget::UpdateSelection()
+ControlNode* PreviewWidget::OnSelectControlByMenu(const Vector<ControlNode*>& nodesUnderPoint, const Vector2& point)
 {
-    QList<ControlNode*> selectedControls;
-    QList<ControlNode*> selectedRootControls;
-    
-    if (sharedData)
+    QPoint globalPos = davaGLWidget->mapToGlobal(QPoint(point.x, point.y));
+    QMenu menu;
+    for (auto it = nodesUnderPoint.rbegin(); it != nodesUnderPoint.rend(); ++it)
     {
-        const QList<PackageBaseNode*> &nodes = sharedData->GetSelection();
-        for (PackageBaseNode *node : nodes)
+        ControlNode* controlNode = *it;
+        QString className = QString::fromStdString(controlNode->GetControl()->GetClassName());
+        QAction* action = new QAction(QString::fromStdString(controlNode->GetName()), &menu);
+        action->setCheckable(true);
+        menu.addAction(action);
+        void* ptr = static_cast<void*>(controlNode);
+        action->setData(QVariant::fromValue(ptr));
+        if (selectionContainer.IsSelected(controlNode))
         {
-            if (node->GetControl())
-            {
-                selectedControls.push_back(static_cast<ControlNode*>(node));
-                
-                PackageBaseNode *root = node;
-                while (root->GetParent() && root->GetParent()->GetControl())
-                    root = root->GetParent();
-                if (selectedRootControls.indexOf(static_cast<ControlNode*>(root)) < 0)
-                    selectedRootControls.push_back(static_cast<ControlNode*>(root));
-                
-            }
+            action->setChecked(true);
         }
     }
-    model->SetRootControls(selectedRootControls);
-    model->SetSelectedControls(selectedControls);
-
-}
-
-void PreviewWidget::OnMonitorChanged()
-{
-    const auto index = scaleCombo->currentIndex();
-    scaleCombo->setCurrentIndex(-1);
-    scaleCombo->setCurrentIndex(index);
-}
-
-void PreviewWidget::OnControlNodeSelected(QList<ControlNode *> selectedNodes)
-{
-    sharedData->SetData("editorActiveControls", QVariant::fromValue(selectedNodes));
-}
-
-void PreviewWidget::OnError(const ResultList &resultList)
-{
-    if (resultList)
+    QAction* selectedAction = menu.exec(globalPos);
+    if (nullptr != selectedAction)
     {
-        return;
+        void* ptr = selectedAction->data().value<void*>();
+        return static_cast<ControlNode*>(ptr);
+    }
+    return nullptr;
+}
+
+void PreviewWidget::OnDocumentChanged(Document* arg)
+{
+    document = arg;
+    if (nullptr != document)
+    {
+        EditorSystemsManager* systemManager = document->GetSystemManager();
+        scrollAreaController->SetNestedControl(systemManager->GetRootControl());
+        scrollAreaController->SetMovableControl(systemManager->GetScalableControl());
     }
     else
     {
-        QStringList errors;
-        for(const auto &result : resultList.GetResults())
-        {
-            errors << QString::fromStdString(result.message);
-        }
-        QMessageBox::warning(qApp->activeWindow(), tr("Error occurred!"), errors.join('\n'));
+        scrollAreaController->SetMovableControl(nullptr);
+        scrollAreaController->SetNestedControl(nullptr);
     }
 }
 
-void PreviewWidget::OnScaleByZoom(int scaleDelta)
+void PreviewWidget::OnDocumentActivated(Document* document)
 {
-    //TODO: implement this method
+    PreviewContext* context = DynamicTypeCheck<PreviewContext*>(document->GetContext(this));
+    if (nullptr == context)
+    {
+        context = new PreviewContext();
+        document->SetContext(this, context);
+        QPoint position(horizontalScrollBar->maximum() / 2.0f, verticalScrollBar->maximum() / 2.0f);
+        scrollAreaController->SetPosition(position);
+        document->GetSystemManager()->GetControlByMenu = std::bind(&PreviewWidget::OnSelectControlByMenu, this, _1, _2);
+    }
+    else
+    {
+        scrollAreaController->SetPosition(context->canvasPosition);
+    }
+}
+
+void PreviewWidget::OnDocumentDeactivated(Document* document)
+{
+    PreviewContext* context = DynamicTypeCheck<PreviewContext*>(document->GetContext(this));
+    context->canvasPosition = scrollAreaController->GetPosition();
+}
+
+void PreviewWidget::SetSelectedNodes(const SelectedNodes& selected, const SelectedNodes& deselected)
+{
+    selectionContainer.MergeSelection(selected, deselected);
+}
+
+void PreviewWidget::OnRootControlPositionChanged(const DAVA::Vector2& pos)
+{
+    rootControlPos = QPoint(static_cast<int>(pos.x), static_cast<int>(pos.y));
+    ApplyPosChanges();
+}
+
+void PreviewWidget::OnNestedControlPositionChanged(const QPoint &pos)
+{
+    canvasPos = pos;
+    ApplyPosChanges();
+}
+
+void PreviewWidget::ApplyPosChanges()
+{
+    QPoint viewPos = canvasPos + rootControlPos;
+    rulerController->SetViewPos(-viewPos);
+}
+
+void PreviewWidget::UpdateScrollArea()
+{
+    QSize areaSize = scrollAreaController->GetViewSize();
+    QSize contentSize = scrollAreaController->GetCanvasSize();
+
+    verticalScrollBar->setPageStep(areaSize.height());
+    horizontalScrollBar->setPageStep(areaSize.width());
+
+    verticalScrollBar->setRange(0, contentSize.height() - areaSize.height());
+    horizontalScrollBar->setRange(0, contentSize.width() - areaSize.width());
+}
+
+void PreviewWidget::OnPositionChanged(const QPoint& position)
+{
+    horizontalScrollBar->setSliderPosition(position.x());
+    verticalScrollBar->setSliderPosition(position.y());
+}
+
+void PreviewWidget::OnScaleChanged(qreal scale)
+{
+    scaleCombo->lineEdit()->setText(ScaleStringFromReal(scale));
+    emit ScaleChanged(scale);
 }
 
 void PreviewWidget::OnScaleByComboIndex(int index)
-{   
-    if (index < 0 || index >= static_cast<int>( COUNT_OF(SCALE_PERCENTAGES)))
-    {
-        return;
-    }
-
-    auto dpr = static_cast<int>( davaGLWidget->GetGLWindow()->devicePixelRatio() );
-    auto scaleValue = SCALE_PERCENTAGES[index] * dpr;
-    model->SetCanvasControlScale(scaleValue);
+{
+    DVASSERT(index >= 0);
+    float scale = static_cast<float>(percentages.at(index));
+    scrollAreaController->SetScale(scale);
 }
 
 void PreviewWidget::OnScaleByComboText()
 {
-	// Firstly verify whether the value is already set.
-	QString curTextValue = scaleCombo->currentText().trimmed();
-	int scaleValue = 0;
-	if (curTextValue.endsWith(" %"))
-	{
-		int endCharPos = curTextValue.lastIndexOf(" %");
-		QString remainderNumber = curTextValue.left(endCharPos);
-		scaleValue = remainderNumber.toInt();
-	}
-	else
-	{
-		// Try to parse the value.
-		scaleValue = curTextValue.toFloat();
-	}
+    float scale = GetScale();
+    scrollAreaController->SetScale(scale / 100.0f);
 }
 
-void PreviewWidget::OnZoomInRequested()
+void PreviewWidget::OnGLWidgetResized(int width, int height)
 {
-	OnScaleByZoom(10);
-}
-
-void PreviewWidget::OnZoomOutRequested()
-{
-	OnScaleByZoom(-10);
-}
-
-void PreviewWidget::OnCanvasScaleChanged(int newScale)
-{
-    auto dpr = static_cast<int>( davaGLWidget->GetGLWindow()->devicePixelRatio() );
-    newScale /= dpr;
-
-    QString newScaleText = QString(PERCENTAGE_FORMAT).arg(newScale);
-    if (scaleCombo->currentText() != newScaleText )
-    {
-        scaleCombo->lineEdit()->blockSignals(true);
-        scaleCombo->setEditText(newScaleText);
-        scaleCombo->lineEdit()->blockSignals(false);
-    }
-}
-
-void PreviewWidget::OnGLWidgetResized(int width, int height, int dpr)
-{
-    Vector2 screenSize(static_cast<float32>(width) * dpr, static_cast<float32>(height) * dpr);
-
-    UIScreenManager::Instance()->GetScreen()->SetSize(screenSize);
-
-    model->SetViewControlSize(QSize(width * dpr, height * dpr));
+    scrollAreaController->SetViewSize(QSize(width, height));
+    UpdateScrollArea();
 }
 
 void PreviewWidget::OnVScrollbarMoved(int vPosition)
 {
-    QPoint canvasPosition = model->GetCanvasPosition();
-    canvasPosition.setY(-vPosition);
-    model->SetCanvasPosition(canvasPosition);
+    QPoint canvasPosition = scrollAreaController->GetPosition();
+    canvasPosition.setY(vPosition);
+    scrollAreaController->SetPosition(canvasPosition);
 }
 
 void PreviewWidget::OnHScrollbarMoved(int hPosition)
 {
-    QPoint canvasPosition = model->GetCanvasPosition();
-    canvasPosition.setX(-hPosition);
-    model->SetCanvasPosition(canvasPosition);
+    QPoint canvasPosition = scrollAreaController->GetPosition();
+    canvasPosition.setX(hPosition);
+    scrollAreaController->SetPosition(canvasPosition);
 }
 
-void PreviewWidget::OnScrollPositionChanged(const QPoint &newPosition)
+bool PreviewWidget::eventFilter(QObject* obj, QEvent* event)
 {
-    QPoint scrollbarPosition(-newPosition.x(), -newPosition.y());
-
-    if (verticalScrollBar->sliderPosition() != scrollbarPosition.y())
+    if (obj == davaGLWidget->GetGLView())
     {
-        verticalScrollBar->blockSignals(true);
-        verticalScrollBar->setSliderPosition(scrollbarPosition.y());
-        verticalScrollBar->blockSignals(false);
+        switch (event->type())
+        {
+        case QEvent::Wheel:
+            OnWheelEvent(DynamicTypeCheck<QWheelEvent*>(event));
+            break;
+        case QEvent::NativeGesture:
+            OnNativeGuestureEvent(DynamicTypeCheck<QNativeGestureEvent*>(event));
+            break;
+        case QEvent::MouseMove:
+            OnMoveEvent(DynamicTypeCheck<QMouseEvent*>(event));
+        case QEvent::MouseButtonPress:
+            lastMousePos = DynamicTypeCheck<QMouseEvent*>(event)->pos();
+        default:
+            break;
+        }
     }
+    return QWidget::eventFilter(obj, event);
+}
 
-    if (horizontalScrollBar->sliderPosition() != scrollbarPosition.x())
+void PreviewWidget::OnWheelEvent(QWheelEvent* event)
+{
+    if (document == nullptr)
     {
-        horizontalScrollBar->blockSignals(true);
-        horizontalScrollBar->setSliderPosition(scrollbarPosition.x());
-        horizontalScrollBar->blockSignals(false);
+        return;
+    }
+//QWheelEvent::source to distinguish wheel and touchpad is implemented only in Qt 5.5
+#ifdef Q_OS_WIN //under MAC OS we get this event when scrolling by two fingers on MAC touchpad
+    if (!QApplication::keyboardModifiers().testFlag(Qt::ControlModifier))
+#endif //Q_OS_WIN
+    {
+#ifdef Q_OS_WIN
+        QPoint delta = event->angleDelta();
+#else //Q_OS_MAC
+        QPoint delta = event->pixelDelta();
+#endif //Q_OS_WIN
+        //scroll view up and down
+        static const qreal wheelDelta = 0.002f;
+        int horizontalScrollBarValue = horizontalScrollBar->value();
+        horizontalScrollBarValue -= delta.x() * horizontalScrollBar->pageStep() * wheelDelta;
+        horizontalScrollBar->setValue(horizontalScrollBarValue);
+
+        int verticalScrollBarValue = verticalScrollBar->value();
+        verticalScrollBarValue -= delta.y() * verticalScrollBar->pageStep() * wheelDelta;
+        verticalScrollBar->setValue(verticalScrollBarValue);
+    }
+#ifdef Q_OS_WIN
+    else
+    {
+        //resize view
+        int tickSize = 120;
+        int ticksCount = event->angleDelta().y() / tickSize;
+        if (ticksCount == 0)
+        {
+            return;
+        }
+        qreal scale = GetScaleFromWheelEvent(ticksCount);
+        QPoint pos = event->pos();
+        scrollAreaController->AdjustScale(scale, pos);
+    }
+#endif //Q_OS_WIN
+}
+
+void PreviewWidget::OnNativeGuestureEvent(QNativeGestureEvent* event)
+{
+    if (document == nullptr)
+    {
+        return;
+    }
+    const qreal normalScale = 1.0f;
+    const qreal expandedScale = 1.5f;
+    qreal scale = scrollAreaController->GetScale();
+    QPoint pos = event->pos();
+    switch (event->gestureType())
+    {
+    case Qt::ZoomNativeGesture:
+        scrollAreaController->AdjustScale(scale + event->value(), pos);
+        break;
+    case Qt::SmartZoomNativeGesture:
+        scrollAreaController->AdjustScale((event->value() == 0.0f ? normalScale : expandedScale), pos);
+        //event->value() returns 1 or 0
+        break;
+    default:
+        break;
     }
 }
 
-void PreviewWidget::OnScrollAreaChanged(const QSize &viewSize, const QSize &contentSize)
+void PreviewWidget::OnMoveEvent(QMouseEvent* event)
 {
-    QSize maximumPosition(contentSize - viewSize);
-
-    if (maximumPosition.height() < 0)
+    rulerController->UpdateRulerMarkers(event->pos());
+    if (event->buttons() & Qt::MiddleButton)
     {
-        maximumPosition.setHeight(0);
-    }
+        QPoint delta(event->pos() - lastMousePos);
+        lastMousePos = event->pos();
 
-    if (maximumPosition.width() < 0)
-    {
-        maximumPosition.setWidth(0);
-    }
+        int horizontalScrollBarValue = horizontalScrollBar->value();
+        horizontalScrollBarValue -= delta.x();
+        horizontalScrollBar->setValue(horizontalScrollBarValue);
 
-    if (verticalScrollBar->maximum() != maximumPosition.height())
-    {
-        verticalScrollBar->blockSignals(true);
-        verticalScrollBar->setMinimum(0);
-        verticalScrollBar->setMaximum(maximumPosition.height());
-        verticalScrollBar->setPageStep(viewSize.height());
-        verticalScrollBar->blockSignals(false);
+        int verticalScrollBarValue = verticalScrollBar->value();
+        verticalScrollBarValue -= delta.y();
+        verticalScrollBar->setValue(verticalScrollBarValue);
     }
+}
 
-    if (horizontalScrollBar->maximum() != maximumPosition.width())
+qreal PreviewWidget::GetScaleFromWheelEvent(int ticksCount) const
+{
+    qreal scale = scrollAreaController->GetScale();
+    if (ticksCount > 0)
     {
-        horizontalScrollBar->blockSignals(true);
-        horizontalScrollBar->setMinimum(0);
-        horizontalScrollBar->setMaximum(maximumPosition.width());
-        horizontalScrollBar->setPageStep(viewSize.width());
-        horizontalScrollBar->blockSignals(false);
+        scale = GetNextScale(scale, ticksCount);
     }
+    else if (ticksCount < 0)
+    {
+        scale = GetPreviousScale(scale, ticksCount);
+    }
+    return scale;
+}
+
+qreal PreviewWidget::GetNextScale(qreal currentScale, int ticksCount) const
+{
+    auto iter = std::upper_bound(percentages.begin(), percentages.end(), currentScale);
+    if (iter == percentages.end())
+    {
+        return currentScale;
+    }
+    ticksCount--;
+    int distance = std::distance(iter, percentages.end());
+    ticksCount = std::min(distance, ticksCount);
+    std::advance(iter, ticksCount);
+    return iter != percentages.end() ? *iter : percentages.last();
+}
+
+qreal PreviewWidget::GetPreviousScale(qreal currentScale, int ticksCount) const
+{
+    auto iter = std::lower_bound(percentages.begin(), percentages.end(), currentScale);
+    if (iter == percentages.end())
+    {
+        return currentScale;
+    }
+    int distance = std::distance(iter, percentages.begin());
+    ticksCount = std::max(ticksCount, distance);
+    std::advance(iter, ticksCount);
+    return *iter;
 }

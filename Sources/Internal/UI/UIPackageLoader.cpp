@@ -30,6 +30,7 @@
 #include "UIPackageLoader.h"
 
 #include "Base/ObjectFactory.h"
+#include "FileSystem/FileSystem.h"
 #include "FileSystem/FilePath.h"
 #include "FileSystem/YamlNode.h"
 #include "FileSystem/YamlEmitter.h"
@@ -40,12 +41,33 @@
 #include "UI/UIControlHelpers.h"
 #include "UI/UIPackage.h"
 #include "UI/Components/UIComponent.h"
+#include "UI/Layouts/UIAnchorComponent.h"
+#include "Utils/Utils.h"
 
 namespace DAVA
 {
 
 UIPackageLoader::UIPackageLoader()
 {
+    if (MIN_SUPPORTED_VERSION <= VERSION_WITH_LEGACY_ALIGNS)
+    {
+        legacyAlignsMap["leftAnchorEnabled"] = "leftAlignEnabled";
+        legacyAlignsMap["leftAnchor"] = "leftAlign";
+        legacyAlignsMap["hCenterAnchorEnabled"] = "hcenterAlignEnabled";
+        legacyAlignsMap["hCenterAnchor"] = "hcenterAlign";
+        legacyAlignsMap["rightAnchorEnabled"] = "rightAlignEnabled";
+        legacyAlignsMap["rightAnchor"] = "rightAlign";
+        legacyAlignsMap["topAnchorEnabled"] = "topAlignEnabled";
+        legacyAlignsMap["topAnchor"] = "topAlign";
+        legacyAlignsMap["vCenterAnchorEnabled"] = "vcenterAlignEnabled";
+        legacyAlignsMap["vCenterAnchor"] = "vcenterAlign";
+        legacyAlignsMap["bottomAnchorEnabled"] = "bottomAlignEnabled";
+        legacyAlignsMap["bottomAnchor"] = "bottomAlign";
+    }
+    else
+    {
+        DVASSERT(false); // we have to remove legacy aligns support if min supported version more than version with legacy aligns
+    }
 }
 
 UIPackageLoader::~UIPackageLoader()
@@ -60,7 +82,7 @@ bool UIPackageLoader::LoadPackage(const FilePath &packagePath, AbstractUIPackage
         loadingQueue.clear();
     }
 
-    if (!packagePath.Exists())
+    if (!FileSystem::Instance()->Exists(packagePath))
         return false;
 
     RefPtr<YamlParser> parser(YamlParser::Create(packagePath));
@@ -86,7 +108,16 @@ bool UIPackageLoader::LoadPackage(const YamlNode *rootNode, const FilePath &pack
 
     const YamlNode *versionNode = headerNode->Get("version");
     if (versionNode == nullptr || versionNode->GetType() != YamlNode::TYPE_STRING)
+    {
         return false;
+    }
+    
+    int32 packageVersion = versionNode->AsInt();
+    if (packageVersion < MIN_SUPPORTED_VERSION || CURRENT_VERSION < packageVersion)
+    {
+        return false;
+    }
+    
 
     builder->BeginPackage(packagePath);
 
@@ -97,11 +128,13 @@ bool UIPackageLoader::LoadPackage(const YamlNode *rootNode, const FilePath &pack
         for (int32 i = 0; i < count; i++)
             builder->ProcessImportedPackage(importedPackagesNode->Get(i)->AsString(), this);
     }
-
+    
+    version = packageVersion; // store version in instance variables after importing packages
+    
     const YamlNode *styleSheetsNode = rootNode->Get("StyleSheets");
     if (styleSheetsNode)
     {
-        builder->ProcessStyleSheets(styleSheetsNode);
+        LoadStyleSheets(styleSheetsNode, builder);
     }
 
     const YamlNode *controlsNode = rootNode->Get("Controls");
@@ -167,6 +200,90 @@ bool UIPackageLoader::LoadControlByName(const String &name, AbstractUIPackageBui
     return false;
 }
 
+void UIPackageLoader::LoadStyleSheets(const YamlNode *styleSheetsNode, AbstractUIPackageBuilder *builder)
+{
+    const Vector<YamlNode*> &styleSheetMap = styleSheetsNode->AsVector();
+    const UIStyleSheetPropertyDataBase* propertyDB = UIStyleSheetPropertyDataBase::Instance();
+    
+    for (YamlNode *styleSheetNode : styleSheetMap)
+    {
+        const MultiMap<String, YamlNode*> &styleSheet = styleSheetNode->AsMap();
+        
+        auto propertiesSectionIter = styleSheet.find("properties");
+        
+        if (propertiesSectionIter != styleSheet.end())
+        {
+            Vector<UIStyleSheetProperty> propertiesToSet;
+            
+            for (const auto& propertyIter : propertiesSectionIter->second->AsMap())
+            {
+                FastName propertyName(propertyIter.first);
+                if (propertyDB->IsValidStyleSheetProperty(propertyName))
+                {
+                    uint32 index = propertyDB->GetStyleSheetPropertyIndex(FastName(propertyIter.first));
+                    const UIStyleSheetPropertyDescriptor& propertyDescr = propertyDB->GetStyleSheetPropertyByIndex(index);
+                    if (propertyDescr.memberInfo != nullptr)
+                    {
+                        const YamlNode* propertyNode = propertyIter.second;
+                        const YamlNode* valueNode = propertyNode;
+                        if (propertyNode->GetType() == YamlNode::TYPE_MAP)
+                            valueNode = propertyNode->Get("value");
+
+                        if (valueNode)
+                        {
+                            VariantType value(valueNode->AsVariantType(propertyDescr.memberInfo));
+
+                            UIStyleSheetProperty property{ index, value };
+
+                            if (propertyNode->GetType() == YamlNode::TYPE_MAP)
+                            {
+                                const YamlNode* transitionTime = propertyNode->Get("transitionTime");
+                                if (transitionTime)
+                                {
+                                    property.transition = true;
+                                    property.transitionTime = transitionTime->AsFloat();
+
+                                    const YamlNode* transitionFunction = propertyNode->Get("transitionFunction");
+                                    if (transitionFunction)
+                                    {
+                                        int32 transitionFunctionType = Interpolation::LINEAR;
+                                        GlobalEnumMap<Interpolation::FuncType>::Instance()->ToValue(transitionFunction->AsString().c_str(), transitionFunctionType);
+                                        property.transitionFunction = (Interpolation::FuncType)transitionFunctionType;
+                                    }
+                                }
+                            }
+
+                            propertiesToSet.push_back(property);
+                        }
+                        else
+                        {
+                            DVASSERT(valueNode);
+                        }
+                    }
+                }
+                else
+                {
+                    Logger::Error("Unknown property name: %s", propertyName.c_str());
+                    DVASSERT(false);
+                }
+            }
+            
+            Vector<String> selectorList;
+            Split(styleSheet.find("selector")->second->AsString(), ",", selectorList);
+            Vector<UIStyleSheetSelectorChain> selectorChains;
+            selectorChains.reserve(selectorList.size());
+            
+            for (const String& selectorString : selectorList)
+            {
+                selectorChains.push_back(UIStyleSheetSelectorChain(selectorString));
+            }
+            
+            builder->ProcessStyleSheet(selectorChains, propertiesToSet);
+        }
+    }
+    
+}
+
 void UIPackageLoader::LoadControl(const YamlNode *node, bool root, AbstractUIPackageBuilder *builder)
 {
     UIControl *control = nullptr;
@@ -216,7 +333,12 @@ void UIPackageLoader::LoadControl(const YamlNode *node, bool root, AbstractUIPac
         LoadComponentPropertiesFromYamlNode(control, node, builder);
         LoadBgPropertiesFromYamlNode(control, node, builder);
         LoadInternalControlPropertiesFromYamlNode(control, node, builder);
-
+        
+        if (version == VERSION_WITH_LEGACY_ALIGNS)
+        {
+            ProcessLegacyAligns(control, node, builder);
+        }
+        
         // load children
         const YamlNode * childrenNode = node->Get("children");
         if (childrenNode)
@@ -227,9 +349,6 @@ void UIPackageLoader::LoadControl(const YamlNode *node, bool root, AbstractUIPac
         }
 
         control->LoadFromYamlNodeCompleted();
-        if (root)
-            control->ApplyAlignSettingsForChildren();
-        // yamlLoader->PostLoad(control);
 
     }
     builder->EndControl(root);
@@ -248,7 +367,7 @@ void UIPackageLoader::LoadControlPropertiesFromYamlNode(UIControl *control, cons
 
         VariantType res;
         if (node)
-            res = ReadVariantTypeFromYamlNode(member, node, builder);
+            res = ReadVariantTypeFromYamlNode(member, node, member->Name().c_str());
         builder->ProcessProperty(member, res);
     }
     builder->EndControlPropertiesSection();
@@ -266,13 +385,44 @@ void UIPackageLoader::LoadComponentPropertiesFromYamlNode(UIControl *control, co
             for (int32 j = 0; j < insp->MembersCount(); j++)
             {
                 const InspMember *member = insp->Member(j);
-                VariantType res = ReadVariantTypeFromYamlNode(member, nodeDescr.node, builder);
+                VariantType res = ReadVariantTypeFromYamlNode(member, nodeDescr.node, member->Name().c_str());
                 builder->ProcessProperty(member, res);
             }
         }
 
         builder->EndComponentPropertiesSection();
     }
+}
+    
+void UIPackageLoader::ProcessLegacyAligns(UIControl *control, const YamlNode *node, AbstractUIPackageBuilder *builder)
+{
+    bool hasAnchorProperties = false;
+    for (const auto &it : legacyAlignsMap)
+    {
+        if (node->Get(it.second))
+        {
+            hasAnchorProperties = true;
+            break;
+        }
+    }
+    
+    if (hasAnchorProperties)
+    {
+        UIComponent *component = builder->BeginComponentPropertiesSection(UIComponent::ANCHOR_COMPONENT, 0);
+        if (component)
+        {
+            const InspInfo *insp = component->GetTypeInfo();
+            for (int32 j = 0; j < insp->MembersCount(); j++)
+            {
+                const InspMember *member = insp->Member(j);
+                VariantType res = ReadVariantTypeFromYamlNode(member, node, legacyAlignsMap[String(member->Name().c_str())]);
+                builder->ProcessProperty(member, res);
+            }
+        }
+        
+        builder->EndComponentPropertiesSection();
+    }
+    
 }
 
 Vector<UIPackageLoader::ComponentNode> UIPackageLoader::ExtractComponentNodes(const YamlNode *node)
@@ -337,7 +487,7 @@ void UIPackageLoader::LoadBgPropertiesFromYamlNode(UIControl *control, const Yam
                 const InspMember *member = insp->Member(j);
                 VariantType res;
                 if (componentNode)
-                    res = ReadVariantTypeFromYamlNode(member, componentNode, builder);
+                    res = ReadVariantTypeFromYamlNode(member, componentNode, member->Name().c_str());
                 builder->ProcessProperty(member, res);
             }
         }
@@ -365,7 +515,7 @@ void UIPackageLoader::LoadInternalControlPropertiesFromYamlNode(UIControl *contr
 
                 VariantType value;
                 if (componentNode)
-                    value = ReadVariantTypeFromYamlNode(member, componentNode, builder);
+                    value = ReadVariantTypeFromYamlNode(member, componentNode, member->Name().c_str());
                 builder->ProcessProperty(member, value);
             }
         }
@@ -373,9 +523,10 @@ void UIPackageLoader::LoadInternalControlPropertiesFromYamlNode(UIControl *contr
     }
 }
 
-VariantType UIPackageLoader::ReadVariantTypeFromYamlNode(const InspMember *member, const YamlNode *node, AbstractUIPackageBuilder *builder)
+VariantType UIPackageLoader::ReadVariantTypeFromYamlNode(const InspMember *member, const YamlNode *node, const String &propertyName)
 {
-    const YamlNode *valueNode = node->Get(member->Name().c_str());
+    const YamlNode *valueNode = node->Get(propertyName);
+
     if (valueNode)
     {
         return valueNode->AsVariantType(member);

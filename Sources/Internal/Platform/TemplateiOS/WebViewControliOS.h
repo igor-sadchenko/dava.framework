@@ -30,7 +30,10 @@
 #ifndef __DAVAENGINE_WEBVIEWCONTROL_IOS_H__
 #define __DAVAENGINE_WEBVIEWCONTROL_IOS_H__
 
-#include "../../UI/IWebViewControl.h"
+#include "Base/Platform.h"
+#if defined(__DAVAENGINE_IPHONE__) && !defined(__DISABLE_NATIVE_WEBVIEW__)
+
+#include "UI/IWebViewControl.h"
 
 namespace DAVA {
 
@@ -83,7 +86,7 @@ public:
     int32 GetDataDetectorTypes() const override;
     
     void SetRenderToTexture(bool value) override;
-    bool IsRenderToTexture() const override {return isRenderToTexture;}
+    bool IsRenderToTexture() const override {return pendingRenderToTexture;}
     
     void WillDraw() override;
     
@@ -115,11 +118,15 @@ private:
     
     bool gesturesEnabled;
     bool isRenderToTexture;
+    bool pendingRenderToTexture;
     bool isVisible;
+    bool pendingVisible;
     
     UIWebView& uiWebView;
 };
 
 };
+
+#endif //defined(__DAVAENGINE_IPHONE__) && !defined(__DISABLE_NATIVE_WEBVIEW__)
 
 #endif /* defined(__DAVAENGINE_WEBVIEWCONTROL_IOS_H__) */

@@ -44,35 +44,31 @@ IPAddress::IPAddress(const char8* address) : addr(0)
 
 bool IPAddress::ToString(char8* buffer, size_t size) const
 {
-#ifdef __DAVAENGINE_WIN_UAP__
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-    return false;
-#else
     DVASSERT(buffer != NULL && size > 0);
     return 0 == uv_ip4_name(Endpoint(*this, 0).CastToSockaddrIn(), buffer, size);
-#endif
 }
 
 String IPAddress::ToString() const
 {
     char8 buf[20];  // This should be enough for IPv4 address
-    return ToString(buf, COUNT_OF(buf)) ? String(buf)
-                                        : String();
+    bool ret = ToString(buf, 20);
+    DVASSERT(ret);
+    return String(ret ? buf : "");
 }
 
 IPAddress IPAddress::FromString(const char8* addr)
 {
-#ifdef __DAVAENGINE_WIN_UAP__
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-    return IPAddress();
-#else
     DVASSERT(addr != NULL);
 
     Endpoint endp;
     if(0 == uv_ip4_addr(addr, 0, endp.CastToSockaddrIn()))
         return endp.Address();
     return IPAddress();
-#endif
+}
+
+IPAddress IPAddress::FromString(const String& addr)
+{
+    return FromString(addr.c_str());
 }
 
 }   // namespace Net

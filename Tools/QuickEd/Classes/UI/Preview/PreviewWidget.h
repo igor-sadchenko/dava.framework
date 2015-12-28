@@ -31,24 +31,23 @@
 #define __QUICKED_PREVIEW_WIDGET_H__
 
 #include <QWidget>
-#include <QPointer>
 #include "ui_PreviewWidget.h"
-#include "Base/Result.h"
+#include "EditorSystems/SelectionContainer.h"
+#include <UI/UIControl.h>
 
 namespace Ui {
     class PreviewWidget;
 }
 
-class SharedData;
-class PreviewModel;
+class Document;
 class DavaGLWidget;
 class ControlNode;
+class ScrollAreaController;
+class PackageBaseNode;
+class RulerController;
 
-enum ScreenId
-{
-    UNKNOWN_SCREEN = -1,
-    EDIT_SCREEN = 0,
-};
+class QWheelEvent;
+class QNativeGestureEvent;
 
 class PreviewWidget : public QWidget, public Ui::PreviewWidget
 {
@@ -56,40 +55,71 @@ class PreviewWidget : public QWidget, public Ui::PreviewWidget
 public:
     explicit PreviewWidget(QWidget *parent = nullptr);
     ~PreviewWidget() = default;
-    DavaGLWidget *GetDavaGLWidget();
+    DavaGLWidget* GetGLWidget();
+    ScrollAreaController* GetScrollAreaController();
+    float GetScale() const;
+    RulerController* GetRulerController();
+    ControlNode* OnSelectControlByMenu(const DAVA::Vector<ControlNode*>& nodes, const DAVA::Vector2& pos);
+
+signals:
+    void ScaleChanged(float scale);
+    void DeleteRequested();
+    void ImportRequested();
+    void CutRequested();
+    void CopyRequested();
+    void PasteRequested();
+    void SelectAllRequested();
+    void FocusNextChild();
+    void FocusPreviousChild();
+
 public slots:
-    void OnDocumentChanged(SharedData *context);
-    void OnDataChanged(const QByteArray &role);
+    void OnDocumentChanged(Document* document);
+    void OnDocumentActivated(Document* document);
+    void OnDocumentDeactivated(Document* document);
+    void SetSelectedNodes(const SelectedNodes& selected, const SelectedNodes& deselected);
+    void OnRootControlPositionChanged(const DAVA::Vector2 &pos);
+    void OnNestedControlPositionChanged(const QPoint &pos);
 
 private slots:
-    // Zoom.
-	void OnScaleByComboIndex(int value);
-	void OnScaleByComboText();
-	void OnZoomInRequested();
-	void OnZoomOutRequested();
-    
-    void OnCanvasScaleChanged(int newScale);
-    void OnGLWidgetResized(int width, int height, int dpr);
+    void OnScaleChanged(qreal scale);
+    void OnScaleByComboIndex(int value);
+    void OnScaleByComboText();
+
+    void OnGLWidgetResized(int width, int height);
 
     void OnVScrollbarMoved(int position);
     void OnHScrollbarMoved(int position);
-    void OnScrollPositionChanged(const QPoint &newPosition);
-    void OnScrollAreaChanged(const QSize &viewSize, const QSize &contentSize);
     
-    void OnMonitorChanged();
+    void UpdateScrollArea();
+    void OnPositionChanged(const QPoint& position);
 
-    void OnControlNodeSelected(QList<ControlNode*> selectedNodes);
-
-    void OnError(const DAVA::ResultList &resultList);
-
-private:
-    void OnScaleByZoom(int scaleDelta); 
-    void UpdateSelection();
+protected:
+    bool eventFilter(QObject* obj, QEvent* e) override;
 
 private:
-    DavaGLWidget *davaGLWidget;
-    SharedData *sharedData;
-    PreviewModel *model;
+    void ApplyPosChanges();
+    void OnWheelEvent(QWheelEvent* event);
+    void OnNativeGuestureEvent(QNativeGestureEvent* event);
+    void OnMoveEvent(QMouseEvent* event);
+    qreal GetScaleFromWheelEvent(int ticksCount) const;
+    qreal GetNextScale(qreal currentScale, int ticksCount) const;
+    qreal GetPreviousScale(qreal currentScale, int ticksCount) const;
+
+    QPoint lastMousePos;
+    Document* document = nullptr;
+    DavaGLWidget* davaGLWidget = nullptr;
+    ScrollAreaController* scrollAreaController = nullptr;
+    QList<qreal> percentages;
+
+    SelectionContainer selectionContainer;
+    RulerController* rulerController = nullptr;
+    QPoint rootControlPos;
+    QPoint canvasPos;
 };
+
+inline DavaGLWidget* PreviewWidget::GetGLWidget()
+{
+    return davaGLWidget;
+}
 
 #endif // __QUICKED_PREVIEW_WIDGET_H__

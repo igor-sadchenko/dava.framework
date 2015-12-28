@@ -38,6 +38,7 @@
 
 namespace DAVA
 {
+static const int32 INVALID_INDEX = -1;
 
 float32 UIListDelegate::CellWidth(UIList* /*list*/, int32 /*index*/)
 {
@@ -223,7 +224,7 @@ void UIList::ResetScrollPosition()
 
 void UIList::FullRefresh()
 {
-    scrollContainer->RemoveAllControls();
+    RemoveAllCells();
     if(!delegate)
     {
         return;
@@ -309,46 +310,75 @@ void UIList::Update(float32 timeElapsed)
         FullRefresh();
     }
 
-    float d = newPos - oldPos;
+    float32 d = newPos - oldPos;
     oldPos = newPos;
+
+    float32 deltaScroll = newScroll - oldScroll;
+    oldScroll = newScroll;
+
+    const float32 accuracyDelta = 0.1f;
+
     Rect r = scrollContainer->GetRect();
-    if(orientation == ORIENTATION_HORIZONTAL)
+
+    if (accuracyDelta <= Abs(deltaScroll))
     {
-        r.x = scroll->GetPosition(d, SystemTimer::FrameDelta(), lockTouch);
+        // this code works for mouse or touchpad scrolls
+        if (orientation == ORIENTATION_HORIZONTAL)
+        {
+            scroll->ScrollWithoutAnimation(deltaScroll, r.dx, &r.x);
+        }
+        else
+        {
+            scroll->ScrollWithoutAnimation(deltaScroll, r.dy, &r.y);
+        }
     }
     else
     {
-        r.y = scroll->GetPosition(d, SystemTimer::FrameDelta(), lockTouch);
+        // this code works for scroll through touch screen.
+        if (orientation == ORIENTATION_HORIZONTAL)
+        {
+            r.x = scroll->GetPosition(d, SystemTimer::FrameDelta(), lockTouch);
+        }
+        else
+        {
+            r.y = scroll->GetPosition(d, SystemTimer::FrameDelta(), lockTouch);
+        }
     }
-    scrollContainer->SetRect(r);
+
+    if (r != scrollContainer->GetRect())
+    {
+        scrollContainer->SetRect(r);
+    }
 
     List<UIControl*>::const_iterator it;
-    Rect viewRect = GetGeometricData().GetUnrotatedRect();//GetRect(TRUE);
+    Rect viewRect = GetGeometricData().GetUnrotatedRect();
     const List<UIControl*> &scrollList = scrollContainer->GetChildren();
-    List<UIControl*> removeList;
+    List<UIListCell*> removeList;
 
     //removing invisible elements
     for(it = scrollList.begin(); it != scrollList.end(); it++)
     {
-        Rect crect = (*it)->GetGeometricData().GetUnrotatedRect();//GetRect(TRUE);
+        UIListCell* cell = DynamicTypeCheck<UIListCell*>(*it);
+
+        Rect crect = cell->GetGeometricData().GetUnrotatedRect();
         if(orientation == ORIENTATION_HORIZONTAL)
         {
             if(crect.x + crect.dx < viewRect.x - viewRect.dx || crect.x > viewRect.x + viewRect.dx*2)
             {
-                removeList.push_back(*it);
+                removeList.push_back(cell);
             }
         }
         else
         {
             if(crect.y + crect.dy < viewRect.y - viewRect.dy || crect.y > viewRect.y + viewRect.dy*2)
             {
-                removeList.push_back(*it);
+                removeList.push_back(cell);
             }
         }
     }
-    for(it = removeList.begin(); it != removeList.end(); it++)
+    for (UIListCell* cell : removeList)
     {
-        scrollContainer->RemoveControl((*it));
+        RemoveCell(cell);
     }
 
     if (!scrollList.empty())
@@ -470,34 +500,43 @@ void UIList::Input(UIEvent *currentInput)
         return;
     }
 
-    if(orientation == ORIENTATION_HORIZONTAL)
+    if (UIEvent::Phase::WHEEL == currentInput->phase)
     {
-        newPos = currentInput->point.x;
+        newScroll += currentInput->scrollDelta.y * GetWheelSensitivity();
     }
     else
     {
-        newPos = currentInput->point.y;
+        if (orientation == ORIENTATION_HORIZONTAL)
+        {
+            newPos = currentInput->point.x;
+        }
+        else
+        {
+            newPos = currentInput->point.y;
+        }
     }
 
     switch (currentInput->phase)
     {
-        case UIEvent::PHASE_BEGAN:
-        {
-            lockTouch = true;
-            oldPos = newPos;
-            mainTouch = currentInput->tid;
-        }
-            break;
-        case UIEvent::PHASE_DRAG:
-        {
-        }
-            break;
-        case UIEvent::PHASE_ENDED:
-        {
-            lockTouch = false;
-            mainTouch = -1;
-        }
-            break;
+    case UIEvent::Phase::BEGAN:
+    {
+        lockTouch = true;
+        oldPos = newPos;
+        mainTouch = currentInput->tid;
+    }
+    break;
+    case UIEvent::Phase::DRAG:
+    {
+    }
+    break;
+    case UIEvent::Phase::ENDED:
+    {
+        lockTouch = false;
+        mainTouch = -1;
+    }
+    break;
+    default:
+        break;
     }
 
     currentInput->SetInputHandledType(UIEvent::INPUT_HANDLED_HARD); // Drag is handled - see please DF-2508.
@@ -512,7 +551,15 @@ bool UIList::SystemInput(UIEvent *currentInput)
 
     if(currentInput->touchLocker != this)
     {
-        if(currentInput->phase == UIEvent::PHASE_BEGAN)
+        if (UIEvent::Phase::WHEEL == currentInput->phase)
+        {
+            if (IsPointInside(currentInput->point))
+            {
+                Input(currentInput);
+                return true;
+            }
+        }
+        else if (currentInput->phase == UIEvent::Phase::BEGAN)
         {
             if(IsPointInside(currentInput->point))
             {
@@ -520,7 +567,7 @@ bool UIList::SystemInput(UIEvent *currentInput)
                 Input(currentInput);
             }
         }
-        else if(currentInput->tid == mainTouch && currentInput->phase == UIEvent::PHASE_DRAG)
+        else if (currentInput->tid == mainTouch && currentInput->phase == UIEvent::Phase::DRAG)
         {
             if(orientation == ORIENTATION_HORIZONTAL)
             {
@@ -541,7 +588,7 @@ bool UIList::SystemInput(UIEvent *currentInput)
                 }
             }
         }
-        else if(currentInput->tid == mainTouch && currentInput->phase == UIEvent::PHASE_ENDED)
+        else if (currentInput->tid == mainTouch && currentInput->phase == UIEvent::Phase::ENDED)
         {
             mainTouch = -1;
             lockTouch = false;
@@ -568,6 +615,26 @@ void UIList::OnSelectEvent(BaseObject *pCaller, void *pUserData, void *callerDat
     }
 }
 
+void UIList::RemoveCell(UIListCell* cell)
+{
+    DVASSERT(cell->cellStore == this);
+    DVASSERT(cell->GetParent() == scrollContainer);
+    scrollContainer->RemoveControl(cell);
+    cell->SetIndex(INVALID_INDEX);
+}
+
+void UIList::RemoveAllCells()
+{
+    scrollContainer->RemoveAllControls();
+    for (const auto& mapPair : cellStore)
+    {
+        for (UIListCell* cell : *mapPair.second)
+        {
+            cell->SetIndex(INVALID_INDEX);
+        }
+    }
+}
+
 void UIList::AddCellAtPos(UIListCell *cell, float32 pos, float32 size, int32 index)
 {
     DVASSERT(cell);
@@ -585,7 +652,7 @@ void UIList::AddCellAtPos(UIListCell *cell, float32 pos, float32 size, int32 ind
         }
         store->push_back(cell);
     }
-    cell->currentIndex = index;
+    cell->SetIndex(index);
     Rect r = cell->GetRect();
     if(orientation == ORIENTATION_HORIZONTAL)
     {
@@ -598,6 +665,7 @@ void UIList::AddCellAtPos(UIListCell *cell, float32 pos, float32 size, int32 ind
         r.y = pos;
     }
     cell->SetRect(r);
+    cell->UpdateLayout();
 
     // Full refresh removes the cells and adds them again, losing the IsVisibleForUIEditor flag
     // (see please DF-2860). So need to recover it basing on what is set on parent's level.
@@ -628,7 +696,7 @@ UIListCell* UIList::GetReusableCell(const String &cellIdentifier)
 
     for(Vector<UIListCell*>::iterator it = store->begin(); it != store->end(); it++)
     {
-        if((*it)->GetIndex() == -1)
+        if ((*it)->GetIndex() == INVALID_INDEX)
         {
             return (*it);
         }
@@ -695,7 +763,7 @@ void UIList::LoadFromYamlNode(const YamlNode * node, UIYamlLoader * loader)
     InitAfterYaml();
 }
 
-UIControl *UIList::Clone()
+UIList* UIList::Clone()
 {
     UIList *c = new UIList(GetRect(), this->orientation);
     c->CopyDataFrom(this);
@@ -776,13 +844,6 @@ float32 UIList::ViewPosition(UIScrollBar *forScrollBar)
 void UIList::OnViewPositionChanged(UIScrollBar *byScrollBar, float32 newPosition)
 {
     scroll->SetPosition(-newPosition);
-}
-
-List<UIControl* >& UIList::GetRealChildren()
-{
-    List<UIControl* >& realChildren = UIControl::GetRealChildren();
-    realChildren.remove(scrollContainer);
-    return realChildren;
 }
 
 void UIList::ScrollToPosition( float32 position, float32 timeSec /*= 0.3f*/ )

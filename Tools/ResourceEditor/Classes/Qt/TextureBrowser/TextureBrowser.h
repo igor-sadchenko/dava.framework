@@ -70,7 +70,8 @@ public:
 	static QColor gpuColor_Tegra;
 	static QColor gpuColor_MALI;
 	static QColor gpuColor_Adreno;
-	static QColor errorColor;
+    static QColor gpuColor_DX11;
+    static QColor errorColor;
 
 protected:
 	void closeEvent(QCloseEvent * e) override;
@@ -117,18 +118,21 @@ private:
 	void resetTextureInfo();
 
 	void setTexture(DAVA::Texture *texture, DAVA::TextureDescriptor *descriptor);
-	void setTextureView(DAVA::eGPUFamily view, eTextureConvertMode convertMode = CONVERT_NOT_EXISTENT);
+    void setTextureView(DAVA::eGPUFamily view, eTextureConvertMode convertMode);
+    eTextureConvertMode getConvertMode(eTextureConvertMode convertMode = CONVERT_NOT_EXISTENT) const;
 
-	void updateConvertedImageAndInfo(const QList<QImage> &images, DAVA::TextureDescriptor& descriptor);
-	void updateInfoColor(QLabel *label, const QColor &color = QColor());
-	void updateInfoPos(QLabel *label, const QPoint &pos = QPoint());
-	void updateInfoOriginal(const QList<QImage> &images);
-	void updateInfoConverted();
-	void updatePropertiesWarning();
+    void updateConvertedImageAndInfo(const QList<QImage>& images, DAVA::TextureDescriptor& descriptor);
+    void updateInfoColor(QLabel* label, const QColor& color = QColor());
+    void updateInfoPos(QLabel* label, const QPoint& pos = QPoint());
+    void updateInfoOriginal(const QList<QImage>& images);
+    void updateInfoConverted();
+    void updatePropertiesWarning();
 
-	void reloadTextureToScene(DAVA::Texture *texture, const DAVA::TextureDescriptor *descriptor, DAVA::eGPUFamily gpu);
+    void reloadTextureToScene(DAVA::Texture* texture, const DAVA::TextureDescriptor* descriptor, DAVA::eGPUFamily gpu);
 
     void ConvertMultipleTextures(eTextureConvertMode convertMode);
+
+    void UpdateSceneMaterialsWithTexture(DAVA::Texture* texture);
 
 private slots:
 	void textureListViewImages(bool checked);
@@ -157,6 +161,8 @@ private slots:
 	void convertStatusQueue(int curJob, int jobCount);
     
     void clearFilter();
+
+    void textureDescriptorChanged(DAVA::TextureDescriptor* descriptor);
 };
 
 #endif // __TEXTURE_BROWSER_H__

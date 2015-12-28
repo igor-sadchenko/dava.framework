@@ -27,6 +27,10 @@
 =====================================================================================*/
 
 
+
+#include "Base/Platform.h"
+#if defined __DAVAENGINE_MACOS__ && !defined __DISABLE_NATIVE_WEBVIEW__
+
 #include "WebViewControlMacOS.h"
 #include "MainWindowController.h"
 
@@ -37,7 +41,11 @@ using namespace DAVA;
 
 // A delegate is needed to block the context menu. Note - this delegate
 // is informal, so no inheritance from WebUIDelegate needed.
+#if defined(__MAC_10_11)
+@interface WebViewControlUIDelegate : NSObject<WebUIDelegate>
+#else
 @interface WebViewControlUIDelegate : NSObject
+#endif
 {
 }
 
@@ -56,8 +64,11 @@ using namespace DAVA;
 
 @end
 
-
+#if defined(__MAC_10_11)
+@interface WebViewPolicyDelegate : NSObject<WebPolicyDelegate, WebFrameLoadDelegate>
+#else
 @interface WebViewPolicyDelegate : NSObject
+#endif
 {
 	IUIWebViewDelegate* delegate;
     DAVA::UIWebView* webView;
@@ -206,10 +217,10 @@ WebViewControl::WebViewControl(DAVA::UIWebView& ptr) :
     [(WebViewPolicyDelegate*)webViewPolicyDelegatePtr setWebViewControl:this];
     [(WebViewPolicyDelegate*)webViewPolicyDelegatePtr setUiWebViewControl:
                                                             &uiWebViewControl];
-    
-	NSView* openGLView = (NSView*)Core::Instance()->GetOpenGLView();
-	[openGLView addSubview:localWebView];
-    
+
+    NSView* openGLView = (NSView*)Core::Instance()->GetNativeView();
+    [openGLView addSubview:localWebView];
+
     // if switch to renderToTexture mode
     [localWebView setShouldUpdateWhileOffscreen:YES];
 }
@@ -297,33 +308,34 @@ void WebViewControl::SetRect(const Rect& rect)
     VirtualCoordinatesSystem& VCS = *VirtualCoordinatesSystem::Instance();
 
     Rect convertedRect = VCS.ConvertVirtualToPhysical(rect);
-    
-	webViewRect.size.width = convertedRect.dx;
-	webViewRect.size.height = convertedRect.dy;
-	
-	webViewRect.origin.x = convertedRect.x;
-	webViewRect.origin.y = VCS.GetPhysicalScreenSize().dy - (convertedRect.y + convertedRect.dy);
-	
-	webViewRect.origin.x += VCS.GetPhysicalDrawOffset().x;
-	webViewRect.origin.y += VCS.GetPhysicalDrawOffset().y;
-	
-	[(WebView*)webViewPtr setFrame: webViewRect];
-    
+
+    webViewRect.size.width = convertedRect.dx;
+    webViewRect.size.height = convertedRect.dy;
+
+    NSView* openGLView = (NSView*)Core::Instance()->GetNativeView();
+    DVASSERT(openGLView);
+    webViewRect.origin.x = convertedRect.x;
+    webViewRect.origin.y = [openGLView isFlipped] ? convertedRect.y : VCS.GetPhysicalScreenSize().dy - (convertedRect.y + convertedRect.dy);
+
+    webViewRect.origin.x += VCS.GetPhysicalDrawOffset().x;
+    webViewRect.origin.y += VCS.GetPhysicalDrawOffset().y;
+
+    [(WebView*)webViewPtr setFrame:webViewRect];
+
     // release previous image if any
     NSBitmapImageRep* imageRep = (NSBitmapImageRep*)webImageCachePtr;
-   [imageRep release];
-    
-    NSView* openGLView = (NSView*)Core::Instance()->GetOpenGLView();
-    DVASSERT(openGLView);
-    
+    [imageRep release];
+
     imageRep = [openGLView bitmapImageRepForCachingDisplayInRect:webViewRect];
     if (nullptr == imageRep)
     {
+        webImageCachePtr = nullptr;
         DVASSERT(rect.dx == 0 && rect.dy == 0);
         return;
     }
     
     webImageCachePtr = imageRep;
+
     [imageRep retain];
 
     DVASSERT(FLOAT_EQUAL((float)[imageRep size].width, ceilf(webViewRect.size.width)) &&
@@ -338,7 +350,7 @@ void WebViewControl::SetVisible(bool isVisible, bool hierarchic)
     {
         if (isVisible)
         {
-            NSView* openGLView = (NSView*)Core::Instance()->GetOpenGLView();
+            NSView* openGLView = (NSView*)Core::Instance()->GetNativeView();
             [openGLView addSubview:(WebView*)webViewPtr];
         }
         else
@@ -372,8 +384,8 @@ void WebViewControl::SetRenderToTexture(bool value)
         {
             // remove sprite from UIControl and show native window
             uiWebViewControl.SetSprite(0, 0);
-            
-            NSView* openGLView = (NSView*)Core::Instance()->GetOpenGLView();
+
+            NSView* openGLView = (NSView*)Core::Instance()->GetNativeView();
             [openGLView addSubview:(WebView*)webViewPtr];
         }
     }
@@ -481,3 +493,5 @@ void* WebViewControl::GetImageCache() const
 {
     return webImageCachePtr;
 }
+
+#endif //defined __DAVAENGINE_MACOS__ && !defined __DISABLE_NATIVE_WEBVIEW__

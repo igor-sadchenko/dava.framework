@@ -27,6 +27,9 @@
 =====================================================================================*/
 
 
+#include "Base/Platform.h"
+#if defined(__DAVAENGINE_IPHONE__) && !defined(__DISABLE_NATIVE_WEBVIEW__)
+
 #include "WebViewControliOS.h"
 #include "DAVAEngine.h"
 
@@ -154,6 +157,7 @@
 
 - (void)webView:(UIWebView *)webView didFailLoadWithError:(NSError *)error
 {
+    DAVA::Logger::Instance()->Error("WebView error: %s", [[error description] UTF8String]);
     if (delegate && self->webView)
 	{
         delegate->PageLoaded(self->webView);
@@ -190,20 +194,20 @@
 
 @end
 
-DAVA::WebViewControl::WebViewControl(DAVA::UIWebView& uiWeb):
-    webViewPtr(0),
-    webViewURLDelegatePtr(0),
-    rightSwipeGesturePtr(0),
-    leftSwipeGesturePtr(0),
-    gesturesEnabled(false),
-    isRenderToTexture(false),
-    isVisible(true),
-    uiWebView(uiWeb)
+DAVA::WebViewControl::WebViewControl(DAVA::UIWebView& uiWeb)
+    : webViewPtr(0)
+    , webViewURLDelegatePtr(0)
+    , rightSwipeGesturePtr(0)
+    , leftSwipeGesturePtr(0)
+    , gesturesEnabled(false)
+    , isRenderToTexture(false)
+    , pendingRenderToTexture(false)
+    , isVisible(true)
+    , uiWebView(uiWeb)
 {
-    HelperAppDelegate* appDelegate = [[UIApplication sharedApplication]
-                                                                    delegate];
-    BackgroundView* backgroundView = [appDelegate glController].backgroundView;
-    
+    HelperAppDelegate* appDelegate = [[UIApplication sharedApplication] delegate];
+    BackgroundView* backgroundView = [appDelegate renderViewController].backgroundView;
+
     ::UIWebView* localWebView = [backgroundView CreateWebView];
     webViewPtr = localWebView;
     
@@ -276,7 +280,8 @@ void DAVA::WebViewControl::SetImageAsSpriteToControl(void* imagePtr, UIControl& 
         NSUInteger bitsPerComponent = 8;
         
         // this way we can copy image from system memory into our buffer
-        
+        Memset(rawData, 0, width * height * bytesPerPixel);
+
         CGContextRef context = CGBitmapContextCreate(rawData, width, height,
                                                      bitsPerComponent, bytesPerRow, colorSpace,
                                                      kCGImageAlphaPremultipliedLast
@@ -360,7 +365,7 @@ WebViewControl::~WebViewControl()
 
     
     HelperAppDelegate* appDelegate = [[UIApplication sharedApplication] delegate];
-    BackgroundView* backgroundView = [appDelegate glController].backgroundView;
+    BackgroundView* backgroundView = [appDelegate renderViewController].backgroundView;
     [backgroundView ReleaseWebView:innerWebView];
     
 	webViewPtr = nil;
@@ -511,28 +516,12 @@ void WebViewControl::SetRect(const Rect& rect)
 
 void WebViewControl::SetVisible(bool isVisible, bool hierarchic)
 {
-    this->isVisible = isVisible;
+    pendingVisible = isVisible;
     
-    if (isRenderToTexture)
+    // Workaround: call WillDraw instantly because it will not be called on SystemDraw
+    if(!isVisible)
     {
-        DAVA::Rect r = uiWebView.GetRect();
-        SetRect(r);
-    }
-    else
-    {
-        if(!isVisible)
-        {
-            [(UIWebView *) webViewPtr setHidden:YES];
-        }
-        else
-        {
-            // if we wan't native control to become invisible we ca do it immidiatly
-            // during update process. But when we want it to be visible, it can't be shown
-            // immidiatly, because is cases, when current Update() takes a lot of time and
-            // user will see native webview over old frame during all that time. This can
-            // be treat as webview blinking, so we should care abot it. We will show webview
-            // in next Draw call.
-        }
+        WillDraw();
     }
 }
 
@@ -618,7 +607,7 @@ void WebViewControl::SetBounces(bool value)
 void WebViewControl::SetGestures(bool value)
 {
     HelperAppDelegate* appDelegate = [[UIApplication sharedApplication] delegate];
-    UIView * backView = appDelegate.glController.backgroundView;
+    UIView* backView = appDelegate.renderViewController.backgroundView;
 
     if (value && !gesturesEnabled)
     {
@@ -691,38 +680,43 @@ int32 WebViewControl::GetDataDetectorTypes() const
     
 void WebViewControl::SetRenderToTexture(bool value)
 {
-    isRenderToTexture = value;
-    
-    // hide windows - move to offScreenPos position
-    // so it still can render WebView into
-    DAVA::Rect r = uiWebView.GetRect();
-    SetRect(r);
-    
-    if (isRenderToTexture)
-    {
-        // we have to show window or we can't render web view into texture
-        if ([(UIWebView*)webViewPtr isHidden])
-        {
-            [(UIWebView*)webViewPtr setHidden:NO];
-        }
-        
-        RenderToTextureAndSetAsBackgroundSpriteToControl(uiWebView);
-    } else
-    {
-        if (isVisible)
-        {
-            [(UIWebView*)webViewPtr setHidden:NO];
-        }
-    }
+    pendingRenderToTexture = value;
 }
     
 void WebViewControl::WillDraw()
 {
-    bool isNativeHidden = [(UIWebView *) webViewPtr isHidden];
-    if(isVisible && isNativeHidden)
+    if(isVisible != pendingVisible)
     {
-        [(UIWebView *) webViewPtr setHidden:NO];
+        isVisible = pendingVisible;
+        [(UIWebView *) webViewPtr setHidden:(isVisible ? NO : YES)];
+    }
+    
+    if (isRenderToTexture != pendingRenderToTexture)
+    {
+        isRenderToTexture = pendingVisible;
+        
+        // hide windows - move to offScreenPos position
+        // so it still can render WebView into
+        DAVA::Rect r = uiWebView.GetRect();
+        SetRect(r);
+        
+        if(isRenderToTexture)
+        {
+            // we have to show window or we can't render web view into texture
+            if(!isVisible)
+            {
+                [(UIWebView*)webViewPtr setHidden:NO];
+            }
+            RenderToTextureAndSetAsBackgroundSpriteToControl(uiWebView);
+            if(!isVisible)
+            {
+                [(UIWebView *) webViewPtr setHidden:YES];
+            }
+            
+        }
     }
 }
     
 } // end namespace DAVA
+
+#endif //defined(__DAVAENGINE_IPHONE__) && !defined(__DISABLE_NATIVE_WEBVIEW__)

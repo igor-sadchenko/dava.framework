@@ -153,7 +153,7 @@ public:
      */
 	virtual const FilePath GetPublicDocumentsPath();
 
-#if defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_IPHONE__)  
+#if defined(__DAVAENGINE_APPLE__)  
     /**
         \brief Function to retrieve user’s home path
         \returns user’s home path
@@ -164,21 +164,20 @@ public:
 	/**
 		\brief Function check if specified path is a regular file
 	*/
-	virtual bool IsFile(const FilePath & pathToCheck);
+    bool IsFile(const FilePath& pathToCheck) const;
 
-		
-	/**
+    /**
 		\brief Function check if specified path is a directory
 	 */
-	virtual bool IsDirectory(const FilePath & pathToCheck);
-	
-	/**
+    bool IsDirectory(const FilePath& pathToCheck) const;
+
+    /**
      \brief Function sets/removes exclusive lock to/from file.
      \param[in] filePath The name of the file to be locked/unlocked.
      \param[in] isLock true to lock file, false to unlock.
      \returns true if file was successfully locked/unlocked, false otherwise
 	 */
-	virtual bool LockFile(const FilePath & filePath, bool isLock);
+    virtual bool LockFile(const FilePath& filePath, bool isLock);
 
     /**
      \brief Function checks whether the file is locked.
@@ -269,6 +268,13 @@ public:
     \returns true if files are equals and false if not
     */
     bool CompareBinaryFiles(const FilePath &filePath1, const FilePath &filePath2);
+
+    bool GetFileSize(const FilePath& path, uint32& size);
+
+    /**
+     \brief Function check if specified path exists on file system
+     */
+    bool Exists(const FilePath& filePath) const;
 
 private:
     bool HasLineEnding(File *f);

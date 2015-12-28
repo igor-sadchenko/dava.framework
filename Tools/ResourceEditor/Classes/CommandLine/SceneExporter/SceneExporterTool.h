@@ -30,52 +30,58 @@
 #ifndef __SCENE_EXPORTER_TOOL_H__
 #define __SCENE_EXPORTER_TOOL_H__
 
-#include "../CommandLineTool.h"
+#include "CommandLine/CommandLineTool.h"
 #include "TextureCompression/TextureConverter.h"
 
+class SceneExporter;
 class SceneExporterTool: public CommandLineTool
 {
-    enum eAction
+    enum eAction : DAVA::int8
     {
         ACTION_NONE = -1,
-        
+
         ACTION_EXPORT_FILE,
-        ACTION_EXPORT_FOLDER
+        ACTION_EXPORT_FOLDER,
+        ACTION_EXPORT_FILELIST
     };
-    
-    enum eObject
+
+    enum eObject : DAVA::int32
     {
+        OBJECT_NONE = -1,
+
         OBJECT_SCENE = 0,
         OBJECT_TEXTURE
     };
-    
-    
+
 public:
+    SceneExporterTool();
 
-    virtual DAVA::String GetCommandLineKey();
-    virtual bool InitializeFromCommandLine();
-    virtual void Process();
-    virtual void PrintUsage();
-    virtual void DumpParams();
-    
-    virtual DAVA::FilePath GetQualityConfigPath() const;
+private:
+    void ConvertOptionsToParamsInternal() override;
+    bool InitializeInternal() override;
 
-protected:
+    void ProcessInternal() override;
+    DAVA::FilePath GetQualityConfigPath() const override;
 
-    eAction commandAction;
-    eObject commandObject;
-    
+    void ExportFolder(SceneExporter& exporter);
+    void ExportFile(SceneExporter& exporter);
+    void ExportFileList(SceneExporter& exporter);
+
+    eAction commandAction = ACTION_NONE;
+    eObject commandObject = OBJECT_NONE;
+
     DAVA::String filename;
     DAVA::String foldername;
-    
+    DAVA::FilePath fileListPath;
+
     DAVA::FilePath inFolder;
     DAVA::FilePath outFolder;
     DAVA::FilePath qualityConfigPath;
 
-	DAVA::eGPUFamily requestedGPU;
-	bool optimizeOnExport;
+    DAVA::eGPUFamily requestedGPU = DAVA::GPU_ORIGIN;
+    bool optimizeOnExport = true;
 
-	DAVA::TextureConverter::eConvertQuality quality;
+    DAVA::TextureConverter::eConvertQuality quality = DAVA::TextureConverter::ECQ_DEFAULT;
 };
 
 

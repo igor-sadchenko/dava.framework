@@ -40,6 +40,8 @@
 #include <QGroupBox>
 #include <QLabel>
 
+QualitySwitcher* QualitySwitcher::switcherDialog = nullptr;
+
 QualitySwitcher::QualitySwitcher(QWidget *parent /* = nullptr */)
     : QDialog(parent, Qt::Tool)
 {
@@ -157,6 +159,11 @@ QualitySwitcher::QualitySwitcher(QWidget *parent /* = nullptr */)
     adjustSize();
 }
 
+QualitySwitcher::~QualitySwitcher()
+{
+    switcherDialog = nullptr;
+}
+
 void QualitySwitcher::ApplyTx()
 {
     QtMainWindow::Instance()->OnReloadTextures();
@@ -169,19 +176,11 @@ void QualitySwitcher::ApplyMa()
     {
         SceneEditor2 *sceneEditor = tabWidget->GetTabScene(tab);
 
-        DAVA::Map<DAVA::NMaterial*, DAVA::Set<DAVA::NMaterial *> > materialsTree;
-        sceneEditor->materialSystem->BuildMaterialsTree(materialsTree);
+        const DAVA::Set<DAVA::NMaterial*>& topParents = sceneEditor->materialSystem->GetTopParents();
 
-        DAVA::Map<DAVA::NMaterial*, DAVA::Set<DAVA::NMaterial *> >::iterator begin = materialsTree.begin();
-        DAVA::Map<DAVA::NMaterial*, DAVA::Set<DAVA::NMaterial *> >::iterator end = materialsTree.end();
-
-        for(; begin != end; begin++)
+        for (auto material : topParents)
         {
-            DAVA::NMaterial *material = begin->first;
-            if(material->GetMaterialType() == DAVA::NMaterial::MATERIALTYPE_MATERIAL)
-            {
-                material->ReloadQuality();
-            }
+            material->InvalidateRenderVariants();
         }
 
         sceneEditor->renderSystem->SetForceUpdateLights();
@@ -197,21 +196,18 @@ void QualitySwitcher::UpdateEntitiesToQuality(DAVA::Entity *e)
     }
 }
 
-void QualitySwitcher::Show()
+QDialog* QualitySwitcher::GetDialog()
 {
-    QualitySwitcher *sw = new QualitySwitcher(QtMainWindow::Instance());
-    sw->setAttribute(Qt::WA_DeleteOnClose, true);
-    connect(sw, &QualitySwitcher::QualityChanged, MaterialEditor::Instance(), &MaterialEditor::OnQualityChanged);
-    connect(sw, &QualitySwitcher::QualityChanged, QtMainWindow::Instance()->GetUI()->sceneInfo, &SceneInfo::OnQualityChanged);
-    sw->show();
-}
-
-void QualitySwitcher::ShowModal()
-{
-    QualitySwitcher sw(QtMainWindow::Instance());
-    connect(&sw, &QualitySwitcher::QualityChanged, MaterialEditor::Instance(), &MaterialEditor::OnQualityChanged);
-    connect(&sw, &QualitySwitcher::QualityChanged, QtMainWindow::Instance()->GetUI()->sceneInfo, &SceneInfo::OnQualityChanged);
-    sw.exec();
+    if (switcherDialog == nullptr)
+    {
+        //we don't need synchronization because of working in UI thread
+        switcherDialog = new QualitySwitcher(QtMainWindow::Instance());
+        switcherDialog->setAttribute(Qt::WA_DeleteOnClose, true);
+        connect(switcherDialog, &QualitySwitcher::QualityChanged, MaterialEditor::Instance(), &MaterialEditor::OnQualityChanged);
+        connect(switcherDialog, &QualitySwitcher::QualityChanged, QtMainWindow::Instance()->GetUI()->sceneInfo, &SceneInfo::OnQualityChanged);
+        switcherDialog->show();
+    }
+    return switcherDialog;
 }
 
 void QualitySwitcher::OnTxQualitySelect(int index)

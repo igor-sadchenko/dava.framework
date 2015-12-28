@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>1024</width>
-    <height>851</height>
+    <height>865</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -66,7 +66,7 @@
      <x>0</x>
      <y>0</y>
      <width>1024</width>
-     <height>21</height>
+     <height>22</height>
     </rect>
    </property>
    <widget class="QMenu" name="menuFile">
@@ -93,14 +93,21 @@
     <property name="title">
      <string>View</string>
     </property>
-    <addaction name="menuTexturesForGPU"/>
    </widget>
    <widget class="QMenu" name="menuTools">
     <property name="title">
      <string>Tools</string>
     </property>
-    <addaction name="actionFontManager"/>
-    <addaction name="actionLocalizationManager"/>
+    <widget class="QMenu" name="menuDebug">
+     <property name="title">
+      <string>Debug</string>
+     </property>
+     <addaction name="actionDump_Controls"/>
+     <addaction name="actionDump_Sprites"/>
+     <addaction name="actionDump_Textures"/>
+    </widget>
+    <addaction name="separator"/>
+    <addaction name="menuDebug"/>
    </widget>
    <widget class="QMenu" name="menuHelp">
     <property name="contextMenuPolicy">
@@ -152,12 +159,6 @@
   </widget>
   <widget class="QStatusBar" name="statusBar"/>
   <widget class="PropertiesWidget" name="propertiesWidget">
-   <property name="minimumSize">
-    <size>
-     <width>200</width>
-     <height>250</height>
-    </size>
-   </property>
    <property name="windowTitle">
     <string>Properties</string>
    </property>
@@ -166,12 +167,6 @@
    </attribute>
   </widget>
   <widget class="FileSystemDockWidget" name="fileSystemDockWidget">
-   <property name="minimumSize">
-    <size>
-     <width>200</width>
-     <height>250</height>
-    </size>
-   </property>
    <property name="windowTitle">
     <string>File System</string>
    </property>
@@ -180,12 +175,6 @@
    </attribute>
   </widget>
   <widget class="PackageWidget" name="packageWidget">
-   <property name="minimumSize">
-    <size>
-     <width>200</width>
-     <height>250</height>
-    </size>
-   </property>
    <property name="allowedAreas">
     <set>Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea</set>
    </property>
@@ -197,12 +186,6 @@
    </attribute>
   </widget>
   <widget class="LibraryWidget" name="libraryWidget">
-   <property name="minimumSize">
-    <size>
-     <width>100</width>
-     <height>250</height>
-    </size>
-   </property>
    <property name="allowedAreas">
     <set>Qt::LeftDockWidgetArea|Qt::RightDockWidgetArea</set>
    </property>
@@ -213,17 +196,15 @@
     <number>1</number>
    </attribute>
   </widget>
-  <widget class="ConsoleDockWidget" name="consoleDockWidget">
-   <property name="windowTitle">
-    <string>Console</string>
-   </property>
-   <attribute name="dockWidgetArea">
-    <number>8</number>
-   </attribute>
-  </widget>
   <widget class="QToolBar" name="toolBarPlugins">
    <property name="windowTitle">
     <string>toolBar</string>
+   </property>
+   <property name="iconSize">
+    <size>
+     <width>16</width>
+     <height>16</height>
+    </size>
    </property>
    <attribute name="toolBarArea">
     <enum>TopToolBarArea</enum>
@@ -231,6 +212,22 @@
    <attribute name="toolBarBreak">
     <bool>false</bool>
    </attribute>
+   <addaction name="actionReloadSprites"/>
+  </widget>
+  <widget class="QDockWidget" name="consoleDockWidget">
+   <property name="windowTitle">
+    <string>Console</string>
+   </property>
+   <attribute name="dockWidgetArea">
+    <number>8</number>
+   </attribute>
+   <widget class="QWidget" name="logWidgetContainer">
+    <layout class="QVBoxLayout" name="verticalLayout">
+     <item>
+      <widget class="LogWidget" name="logWidget"/>
+     </item>
+    </layout>
+   </widget>
   </widget>
   <action name="actionOpen_project">
    <property name="enabled">
@@ -306,11 +303,6 @@
     <string>Properties</string>
    </property>
   </action>
-  <action name="actionFontManager">
-   <property name="text">
-    <string>Font Manager</string>
-   </property>
-  </action>
   <action name="actionClose_project">
    <property name="icon">
     <iconset resource="../DataQt/icons.qrc">
@@ -327,11 +319,6 @@
    </property>
    <property name="shortcutContext">
     <enum>Qt::ApplicationShortcut</enum>
-   </property>
-  </action>
-  <action name="actionLocalizationManager">
-   <property name="text">
-    <string>Localization Manager</string>
    </property>
   </action>
   <action name="actionSaveDocument">
@@ -469,6 +456,33 @@
     <string>GPU</string>
    </property>
   </action>
+  <action name="actionDump_Controls">
+   <property name="text">
+    <string>Dump Controls</string>
+   </property>
+  </action>
+  <action name="actionDump_Sprites">
+   <property name="text">
+    <string>Dump Sprites</string>
+   </property>
+  </action>
+  <action name="actionDump_Textures">
+   <property name="text">
+    <string>Dump Textures</string>
+   </property>
+  </action>
+  <action name="actionReloadSprites">
+   <property name="icon">
+    <iconset resource="../DataQt/icons.qrc">
+     <normaloff>:/Icons/reload.png</normaloff>:/Icons/reload.png</iconset>
+   </property>
+   <property name="text">
+    <string>Reload Sprites</string>
+   </property>
+   <property name="toolTip">
+    <string>reload sprites</string>
+   </property>
+  </action>
  </widget>
  <layoutdefault spacing="6" margin="11"/>
  <customwidgets>
@@ -501,15 +515,15 @@
    <container>1</container>
   </customwidget>
   <customwidget>
-   <class>ConsoleDockWidget</class>
-   <extends>QDockWidget</extends>
-   <header>UI/ConsoleView/ConsoleDockWidget.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
    <class>FileSystemDockWidget</class>
    <extends>QDockWidget</extends>
    <header>UI/FileSystemView/FileSystemDockWidget.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>LogWidget</class>
+   <extends>QWidget</extends>
+   <header>QtTools/ConsoleWidget/logwidget.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

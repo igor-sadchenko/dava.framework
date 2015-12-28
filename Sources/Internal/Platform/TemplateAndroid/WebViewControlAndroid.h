@@ -31,9 +31,9 @@
 #define __DAVAENGINE_WEBVIEWCONTROL_H__
 
 #include "Base/BaseTypes.h"
-#if defined(__DAVAENGINE_ANDROID__)
+#if defined(__DAVAENGINE_ANDROID__) && !defined(__DISABLE_NATIVE_WEBVIEW__)
 
-#include "../../UI/IWebViewControl.h"
+#include "UI/IWebViewControl.h"
 #include "Platform/TemplateAndroid/JniHelpers.h"
 
 namespace DAVA {
@@ -79,6 +79,8 @@ public:
 
     UIWebView& GetUIWebView() const {return webView;}
 
+    void WillDraw() override;
+
 private:
 	int32 webViewId;
 	IUIWebViewDelegate *delegate;
@@ -110,6 +112,8 @@ public:
 	void SetRenderToTexture(int id, bool renderToTexture);
 	bool IsRenderToTexture(int id);
 
+	void WillDraw(int id);
+
 	static IUIWebViewDelegate::eAction URLChanged(int id, const String& newURL, bool isRedirectedByMouseClick);
 	static void PageLoaded(int id, int* rawPixels, int width, int height);
 	static void OnExecuteJScript(int id, const String& result);
@@ -133,11 +137,12 @@ private:
 	Function<void (jint, jboolean)> setVisible;
 	Function<void (jint, jboolean)> setBackgroundTransparency;
 	Function<void (jint, jboolean)> setRenderToTexture;
-	Function<jboolean (jint)>       isRenderToTexture;
+	Function<jboolean (jint)> isRenderToTexture;
+	Function<void (jint)> willDraw;
 };
 
 };
 
-#endif //#if defined(__DAVAENGINE_ANDROID__)
+#endif //#if defined(__DAVAENGINE_ANDROID__) && !defined(__DISABLE_NATIVE_WEBVIEW__)
 
 #endif /* defined(__DAVAENGINE_WEBVIEWCONTROL_MACOS_H__) */

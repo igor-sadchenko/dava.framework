@@ -362,6 +362,10 @@ VariantType YamlNode::AsVariantType() const
         {
             retValue.SetString(it->second->AsString());
         }
+        if (innerTypeName == DAVA::VariantType::TYPENAME_FASTNAME)
+        {
+            retValue.SetFastName(it->second->AsFastName());
+        }
         if(innerTypeName == DAVA::VariantType::TYPENAME_WIDESTRING)
         {
             retValue.SetWideString(it->second->AsWString());
@@ -373,9 +377,9 @@ VariantType YamlNode::AsVariantType() const
             uint8* innerArray = new uint8[size];
             for (int32 i = 0; i < size; ++i)
             {
-                int val = 0;
-                int retCode = sscanf(byteArrayNoodes[i]->AsString().c_str(), "%x", &val);
-                if(val > CHAR_MAX || retCode == 0)
+                int32 val = 0;
+                int32 retCode = sscanf(byteArrayNoodes[i]->AsString().c_str(), "%x", &val);
+                if ((val < 0) || (val > UCHAR_MAX) || (retCode == 0))
                 {
                     delete [] innerArray;
                     return retValue;
@@ -735,8 +739,8 @@ void YamlNode::InternalSetByteArray(const uint8* byteArray, int32 byteArraySize)
 void YamlNode::InternalSetKeyedArchive(KeyedArchive* archive)
 {
     //creation array with variables
-    const Map<String, VariantType*> & innerArchiveMap =  archive->GetArchieveData();
-    for (Map<String, VariantType*>::const_iterator it = innerArchiveMap.begin(); it != innerArchiveMap.end(); ++it)
+    const KeyedArchive::UnderlyingMap& innerArchiveMap = archive->GetArchieveData();
+    for (KeyedArchive::UnderlyingMap::const_iterator it = innerArchiveMap.begin(); it != innerArchiveMap.end(); ++it)
     {
         YamlNode* arrayElementNodeValue = CreateMapNode(true, MR_BLOCK_REPRESENTATION);
         arrayElementNodeValue->InternalAddNodeToMap(it->second->GetTypeName(), CreateNodeFromVariantType(*it->second), false);
@@ -797,6 +801,12 @@ bool YamlNode::InitStringFromVariantType(const VariantType &varType)
             InternalSetString(Format("%llu", varType.AsUInt64()), SR_PLAIN_REPRESENTATION);
         }
         break;
+        case VariantType::TYPE_FASTNAME:
+        {
+            InternalSetString(varType.AsFastName().c_str(), SR_DOUBLE_QUOTED_REPRESENTATION);
+        }
+        break;
+
     default:
         result = false;
         break;
@@ -820,19 +830,19 @@ bool YamlNode::InitArrayFromVariantType(const VariantType &varType)
     case VariantType::TYPE_VECTOR2:
         {
             const Vector2 & vector = varType.AsVector2();
-            InternalSetVector(vector.data,COUNT_OF(vector.data));
+            InternalSetVector(vector.data, Vector2::AXIS_COUNT);
         }
         break;
     case VariantType::TYPE_VECTOR3:
         {
             const Vector3& vector = varType.AsVector3();
-            InternalSetVector(vector.data,COUNT_OF(vector.data));
+            InternalSetVector(vector.data, Vector3::AXIS_COUNT);
         }
         break;
     case VariantType::TYPE_VECTOR4:
         {
             const Vector4& vector = varType.AsVector4();
-            InternalSetVector(vector.data,COUNT_OF(vector.data));
+            InternalSetVector(vector.data, Vector4::AXIS_COUNT);
         }
         break;
     case VariantType::TYPE_MATRIX2:
@@ -862,7 +872,7 @@ bool YamlNode::InitArrayFromVariantType(const VariantType &varType)
     case VariantType::TYPE_COLOR:
         {
             const Color& color = varType.AsColor();
-            InternalSetVector(color.color,COUNT_OF(color.color));
+            InternalSetVector(color.color, Color::CHANNEL_COUNT);
         }
         break;
     default:
@@ -935,6 +945,7 @@ DAVA::YamlNode::eType YamlNode::VariantTypeToYamlNodeType(VariantType::eVariantT
     case VariantType::TYPE_INT64:
     case VariantType::TYPE_UINT64:
     case VariantType::TYPE_FILEPATH:
+    case VariantType::TYPE_FASTNAME:
         return TYPE_STRING;
 
     case VariantType::TYPE_BYTE_ARRAY:

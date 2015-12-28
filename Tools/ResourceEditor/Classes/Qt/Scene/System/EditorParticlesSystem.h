@@ -35,7 +35,6 @@
 #include "Entity/SceneSystem.h"
 #include "UI/UIEvent.h"
 
-#include "Render/RenderManager.h"
 
 class EditorParticlesSystem : public DAVA::SceneSystem
 {
@@ -46,15 +45,16 @@ public:
 	~EditorParticlesSystem();
 
     void SetEmitterSelected(DAVA::Entity *effectEntity, DAVA::ParticleEmitter *emitter);
-    
-protected:
-	void Draw();
-	
-	virtual void AddEntity(DAVA::Entity * entity);
-	virtual void RemoveEntity(DAVA::Entity * entity);
+    void RestartParticleEffects();
 
-	void ProcessCommand(const Command2 *command, bool redo);
-	
+private:
+    void Draw();
+
+    virtual void AddEntity(DAVA::Entity* entity);
+    virtual void RemoveEntity(DAVA::Entity* entity);
+
+    void ProcessCommand(const Command2* command, bool redo);
+
 private:
 	DAVA::Vector<DAVA::Entity*> entities;
 	
@@ -64,10 +64,8 @@ private:
 	void DrawSizeCircleShockWave(DAVA::Entity *effectEntity, DAVA::ParticleEmitter *emitter,DAVA::Vector3 center);
 	void DrawSizeBox(DAVA::Entity *effectEntity, DAVA::ParticleEmitter *emitter, DAVA::Vector3 center);
 	void DrawVectorArrow(DAVA::Entity *effectEntity, DAVA::ParticleEmitter *emitter, DAVA::Vector3 center);
-	
-	DAVA::UniqueHandle renderState;
 
-	DAVA::Entity *selectedEffectEntity;
+    DAVA::Entity* selectedEffectEntity;
     DAVA::ParticleEmitter *selectedEmitter;
 };
 

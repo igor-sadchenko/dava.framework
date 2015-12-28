@@ -55,8 +55,9 @@ public:
 	void	LoadTextures();
 	
 	bool	IsEmptyNode(ColladaSceneNode * node);
-	
-	void	SaveScene(const FilePath & scenePath, const String & sceneName);
+
+    eColladaErrorCodes SaveSC2(const FilePath& scenePath) const;
+    void	SaveScene(const FilePath & scenePath, const String & sceneName);
     String  GetTextureName(const FilePath & scenePath, ColladaTexture * texture);
 
 	void	WriteTexture(SceneFile::TextureDef * texture);
@@ -77,9 +78,11 @@ public:
 	void	WriteNodeAnimationList(ColladaAnimation * animation);
 	
 	void	GetAnimationTimeInfo(FCDocument * document, float32 & timeStart, float32 & timeEnd);
-	
+    
+
 	FILE	* sceneFP;
 	ColladaScene *				colladaScene;
+
 private:
 	FCDocument *				document; 
     SceneFile::Header           header;

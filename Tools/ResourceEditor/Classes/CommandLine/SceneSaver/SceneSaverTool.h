@@ -30,37 +30,36 @@
 #ifndef __SCENE_SAVER_TOOL_H__
 #define __SCENE_SAVER_TOOL_H__
 
-#include "../CommandLineTool.h"
+#include "CommandLine/CommandLineTool.h"
 
 class SceneSaverTool: public CommandLineTool
 {
-    enum eAction
+    enum eAction : DAVA::int32
     {
-        ACTION_NONE = -1,
-        
+        ACTION_NONE = 0,
+
         ACTION_SAVE,
-        ACTION_RESAVE
+        ACTION_RESAVE_SCENE,
+        ACTION_RESAVE_YAML,
     };
-    
+
 public:
+    SceneSaverTool();
 
-    virtual DAVA::String GetCommandLineKey();
-    virtual bool InitializeFromCommandLine();
-    virtual void Process();
-    virtual void PrintUsage();
-    virtual void DumpParams();
+private:
+    void ConvertOptionsToParamsInternal() override;
+    bool InitializeInternal() override;
+    void ProcessInternal() override;
+    DAVA::FilePath GetQualityConfigPath() const override;
 
-    virtual DAVA::FilePath GetQualityConfigPath() const;
-
-protected:
-
-    eAction commandAction;
+    eAction commandAction = ACTION_NONE;
     DAVA::String filename;
     
     DAVA::FilePath inFolder;
     DAVA::FilePath outFolder;
-    
-    bool copyConverted;
+    DAVA::FilePath qualityConfigPath;
+
+    bool copyConverted = false;
 };
 
 

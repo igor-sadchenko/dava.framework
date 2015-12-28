@@ -53,7 +53,7 @@ public:
     void AddFile(const DAVA::FilePath &sourcePath);
     void CopyFiles(DAVA::Set<DAVA::String> &errorLog);
 
-protected:
+private:
     void PrepareDestination(DAVA::Set<DAVA::String> &errorLog);
 
 public:
@@ -65,6 +65,9 @@ public:
     DAVA::Map<DAVA::FilePath, DAVA::FilePath> filesForCopy;
 };
 
-
+namespace RenderObjectsFlusher
+{
+DAVA_DEPRECATED(void Flush());
+}
 
 #endif // __SCENE_UTILS_H__

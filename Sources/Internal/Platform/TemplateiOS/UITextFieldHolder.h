@@ -60,12 +60,13 @@
 - (BOOL)textField:(UITextField *)_textField shouldChangeCharactersInRange:(NSRange)range replacementString:(NSString *)string;
 - (BOOL)textView:(UITextView *)textView_ shouldChangeTextInRange:(NSRange)range replacementText:(NSString *)string;
 
-
+- (void)dropCachedText;
 - (void)setIsPassword:(bool)isPassword;
 - (void)setTextInputAllowed:(bool)value;
 - (void)setUseRtlAlign:(bool)value;
 
-- (void)eventEditingChanged:(UITextField *)sender;
+- (void)eventEditingChanged:(UIView *)sender;
+- (void)textViewDidChange:(UITextView*)textView;
 
 - (void)setupTraits;
 

@@ -397,7 +397,7 @@ void StructureSystem::Add(const DAVA::FilePath &newModelPath, const DAVA::Vector
 			// 
 			// Перенести в Load и завалидейтить только подгруженную Entity
 			// -->
-            SceneValidator::Instance()->ValidateSceneAndShowErrors(sceneEditor, sceneEditor->GetScenePath());
+			SceneValidator::Instance()->ValidateSceneAndShowErrors(sceneEditor, sceneEditor->GetScenePath());
 			// <--
             
 			EmitChanged();
@@ -544,8 +544,8 @@ DAVA::Entity* StructureSystem::LoadInternal(const DAVA::FilePath& sc2path, bool 
 	DAVA::Entity* loadedEntity = nullptr;
 
 	SceneEditor2* sceneEditor = (SceneEditor2*) GetScene();
-    if(nullptr != sceneEditor && sc2path.IsEqualToExtension(".sc2") && sc2path.Exists())
-	{
+    if (nullptr != sceneEditor && sc2path.IsEqualToExtension(".sc2") && FileSystem::Instance()->Exists(sc2path))
+    {
         if(clearCache)
         {
             // if there is already entity for such file, we should release it
@@ -578,11 +578,13 @@ DAVA::Entity* StructureSystem::LoadInternal(const DAVA::FilePath& sc2path, bool 
             props->SetString(ResourceEditor::EDITOR_REFERENCE_TO_OWNER, sc2path.GetAbsolutePathname());
             
             CheckAndMarkSolid(loadedEntity);
+
+			SceneValidator::ExtractEmptyRenderObjectsAndShowErrors(loadedEntity);
         }
 	}
     else
     {
-        DAVA::Logger::Instance()->Error("Wrong extension or no such file: %s", sc2path.GetAbsolutePathname().c_str());
+        DAVA::Logger::Error("Wrong extension or no such file: %s", sc2path.GetAbsolutePathname().c_str());
     }
 
 	return loadedEntity;
@@ -590,32 +592,32 @@ DAVA::Entity* StructureSystem::LoadInternal(const DAVA::FilePath& sc2path, bool 
 
 void StructureSystem::CopyLightmapSettings(DAVA::NMaterial *fromState, DAVA::NMaterial *toState) const
 {
-	Texture* lightmap = fromState->GetTexture(NMaterial::TEXTURE_LIGHTMAP);
-	bool needReleaseTexture = false;
-	if(!lightmap)
-	{
-		lightmap = Texture::CreatePink();
-		needReleaseTexture = true;
-	}
-	
-	toState->SetTexture(NMaterial::TEXTURE_LIGHTMAP, lightmap);
-	
-	if(needReleaseTexture)
-	{
-		SafeRelease(lightmap);
-	}
-	
-	NMaterialProperty* uvScale = fromState->GetMaterialProperty(NMaterial::PARAM_UV_SCALE);
-	if(uvScale)
-	{
-		toState->SetPropertyValue(NMaterial::PARAM_UV_SCALE, uvScale->type, uvScale->size, uvScale->data);
-	}
-	
-	NMaterialProperty* uvOffset = fromState->GetMaterialProperty(NMaterial::PARAM_UV_OFFSET);
-	if(uvScale)
-	{
-		toState->SetPropertyValue(NMaterial::PARAM_UV_OFFSET, uvOffset->type, uvOffset->size, uvOffset->data);
-	}
+    if (fromState->HasLocalTexture(NMaterialTextureName::TEXTURE_LIGHTMAP))
+    {
+        Texture* lightmap = fromState->GetLocalTexture(NMaterialTextureName::TEXTURE_LIGHTMAP);
+        if (toState->HasLocalTexture(NMaterialTextureName::TEXTURE_LIGHTMAP))
+            toState->SetTexture(NMaterialTextureName::TEXTURE_LIGHTMAP, lightmap);
+        else
+            toState->AddTexture(NMaterialTextureName::TEXTURE_LIGHTMAP, lightmap);
+    }
+
+    if (fromState->HasLocalProperty(NMaterialParamName::PARAM_UV_SCALE))
+    {
+        const float* data = fromState->GetLocalPropValue(NMaterialParamName::PARAM_UV_SCALE);
+        if (toState->HasLocalProperty(NMaterialParamName::PARAM_UV_SCALE))
+            toState->SetPropertyValue(NMaterialParamName::PARAM_UV_SCALE, data);
+        else
+            toState->AddProperty(NMaterialParamName::PARAM_UV_SCALE, data, rhi::ShaderProp::TYPE_FLOAT2);
+    }
+
+    if (fromState->HasLocalProperty(NMaterialParamName::PARAM_UV_OFFSET))
+    {
+        const float* data = fromState->GetLocalPropValue(NMaterialParamName::PARAM_UV_OFFSET);
+        if (toState->HasLocalProperty(NMaterialParamName::PARAM_UV_OFFSET))
+            toState->SetPropertyValue(NMaterialParamName::PARAM_UV_OFFSET, data);
+        else
+            toState->AddProperty(NMaterialParamName::PARAM_UV_OFFSET, data, rhi::ShaderProp::TYPE_FLOAT2);
+    }
 }
 
 struct BatchInfo

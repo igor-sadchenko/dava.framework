@@ -33,9 +33,6 @@
 #include "EditorCore.h"
 
 #include "Platform/Qt5/QtLayer.h"
-#include "QtTools/DavaGLWidget/davaglwidget.h"
-#include "QtTools/FrameworkBinding/DavaLoop.h"
-#include "QtTools/FrameworkBinding/FrameworkLoop.h"
 #include "TextureCompression/PVRConverter.h"
 
 void InitPVRTexTool()
@@ -59,33 +56,22 @@ int main(int argc, char *argv[])
     QApplication::setQuitOnLastWindowClosed(false);
 
     DAVA::Core::Run( argc, argv );
-    new DAVA::QtLayer();
+    auto qtLayer = new DAVA::QtLayer(); //will be deleted with DavaRenderer. Sorry about that.
+    QObject::connect(&a, &QApplication::applicationStateChanged, [qtLayer](Qt::ApplicationState state) {
+        state == Qt::ApplicationActive ? qtLayer->OnResume() : qtLayer->OnSuspend();
+    });
     InitPVRTexTool();
+    DAVA::Logger::Instance()->SetLogFilename("QuickEd.txt");
+
+    // Editor Settings might be used by any singleton below during initialization, so
+    // initialize it before any other one.
+    new EditorSettings();
+
     DAVA::ParticleEmitter::FORCE_DEEP_CLONE = true;
 
-    auto loopManager = new DavaLoop();
-    auto loop = new FrameworkLoop();
-
     auto *editorCore = new EditorCore();
-    auto mainWindow = editorCore->GetMainWindow();
-    auto glWidget = mainWindow->GetGLWidget();
 
-    loop->SetOpenGLWindow(glWidget);
     editorCore->Start();
-    loopManager->StartLoop( loop );
 
-    QApplication::exec();
-
-    glWidget->setParent(nullptr);
-
-    delete editorCore;
-    delete loop;
-    delete loopManager;
-    DAVA::QtLayer::Instance()->Release();
-    // TODO: fix crash on release
-    // DAVA::Core::Instance()->Release();    
-
-    delete glWidget;
-
-    return 0;
+    return QApplication::exec();
 }

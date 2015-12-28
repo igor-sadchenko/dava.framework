@@ -31,40 +31,64 @@
 #define __QUICKED_PROPERTIES_WIDGET_H__
 
 #include <QDockWidget>
+#include "Base/BaseTypes.h"
 #include "ui_PropertiesWidget.h"
-
-class SharedData;
+#include "EditorSystems/SelectionContainer.h"
 
 class ControlNode;
 class StyleSheetNode;
+class Document;
+class PackageBaseNode;
 
 class PropertiesWidget : public QDockWidget, public Ui::PropertiesWidget
 {
     Q_OBJECT
 public:
-    PropertiesWidget(QWidget *parent = NULL);
+    PropertiesWidget(QWidget* parent = nullptr);
 
 public slots:
-    void OnDocumentChanged(SharedData *sharedData);
-    void OnDataChanged(const QByteArray &role);
+    void OnDocumentChanged(Document* doc);
+    void SetSelectedNodes(const SelectedNodes& selected, const SelectedNodes& deselected);
 
     void OnAddComponent(QAction *action);
-    void OnRemoveComponent();
+    void OnAddStyleProperty(QAction *action);
+    void OnAddStyleSelector();
+    void OnRemove();
+    
     void OnSelectionChanged(const QItemSelection &selected,
                             const QItemSelection &deselected);
+    void OnModelChanged();
+
+private slots:
+    void OnExpanded(const QModelIndex& index);
+    void OnCollapsed(const QModelIndex& index);
 
 private:
+    QAction *CreateAddComponentAction();
+    QAction *CreateAddStyleSelectorAction();
+    QAction *CreateAddStylePropertyAction();
+    QAction *CreateRemoveAction();
+    QAction *CreateSeparator();
+
     ControlNode *GetSelectedControlNode() const;
     StyleSheetNode *GetSelectedStyleSheetNode() const;
+    
     void UpdateSelection();
     void UpdateActions();
-    
-private:
-    SharedData *sharedData;
-    QAction *addComponentAction;
-    QAction *removeComponentAction;
-    int selectedComponentType;
-    int selectedComponentIndex;
+
+    void ApplyExpanding();
+
+    Document* document = nullptr;
+    QAction* addComponentAction = nullptr;
+    QAction* addStylePropertyAction = nullptr;
+    QAction* addStyleSelectorAction = nullptr;
+    QAction* removeAction = nullptr;
+
+    DAVA::Map<DAVA::String, bool> itemsState;
+
+    SelectionContainer selectionContainer;
+
+    DAVA::String lastTopIndexPath;
 };
 
 #endif //__QUICKED_PROPERTIES_WIDGET_H__

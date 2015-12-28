@@ -125,18 +125,18 @@ void UIStyleSheetSystem::ProcessControl(UIControl* control)
         UIStyleSheetPropertySet appliedProperties;
         const UIStyleSheetPropertySet& localControlProperties = control->GetLocalPropertySet();
         const auto& styleSheets = packageContext->GetSortedStyleSheets();
-        for (const UIStyleSheet* styleSheet : styleSheets)
+        for (const UIPriorityStyleSheet& styleSheet : styleSheets)
         {
-            if (StyleSheetMatchesControl(styleSheet, control))
+            if (StyleSheetMatchesControl(styleSheet.GetStyleSheet(), control))
             {
-                const auto& propertyTable = styleSheet->GetPropertyTable()->GetProperties();
+                const auto& propertyTable = styleSheet.GetStyleSheet()->GetPropertyTable()->GetProperties();
                 for (const auto& iter : propertyTable)
                 {
                     if (!appliedProperties.test(iter.propertyIndex) && !localControlProperties.test(iter.propertyIndex))
                     {
                         appliedProperties.set(iter.propertyIndex);
 
-                        if (iter.transition && control->GetStyleSheetInitialized())
+                        if (iter.transition && control->IsStyleSheetInitialized())
                             DoForAllPropertyInstances(control, iter.propertyIndex, AnimatedPropertySetter{ iter.propertyIndex, iter.value, iter.transitionFunction, iter.transitionTime });
                         else
                             DoForAllPropertyInstances(control, iter.propertyIndex, ImmediatePropertySetter{ iter.propertyIndex, iter.value });
@@ -145,7 +145,7 @@ void UIStyleSheetSystem::ProcessControl(UIControl* control)
             }
         }
 
-        const UIStyleSheetPropertySet& propertiesToReset = control->GetStyledPropertySet() & ~appliedProperties;
+        const UIStyleSheetPropertySet& propertiesToReset = control->GetStyledPropertySet() & (~appliedProperties) & (~localControlProperties);
         if (propertiesToReset.any())
         {
             for (uint32 propertyIndex = 0; propertyIndex < UIStyleSheetPropertyDataBase::STYLE_SHEET_PROPERTY_COUNT; ++propertyIndex)
@@ -161,14 +161,45 @@ void UIStyleSheetSystem::ProcessControl(UIControl* control)
         control->SetStyledPropertySet(appliedProperties);
     }
 
-    control->MarkStyleSheetAsUpdated();
+    control->ResetStyleSheetDirty();
+    control->SetStyleSheetInitialized();
 
     for (UIControl* child : control->GetChildren())
     {
         ProcessControl(child);
     }
 }
+    
+void UIStyleSheetSystem::AddGlobalClass(const FastName &clazz)
+{
+    globalClasses.AddClass(clazz);
+}
 
+void UIStyleSheetSystem::RemoveGlobalClass(const FastName &clazz)
+{
+    globalClasses.RemoveClass(clazz);
+}
+    
+bool UIStyleSheetSystem::HasGlobalClass(const FastName &clazz) const
+{
+    return globalClasses.HasClass(clazz);
+}
+
+void UIStyleSheetSystem::SetGlobalTaggedClass(const FastName& tag, const FastName& clazz)
+{
+    globalClasses.SetTaggedClass(tag, clazz);
+}
+
+void UIStyleSheetSystem::ResetGlobalTaggedClass(const FastName& tag)
+{
+    globalClasses.ResetTaggedClass(tag);
+}
+
+void UIStyleSheetSystem::ClearGlobalClasses()
+{
+    globalClasses.RemoveAllClasses();
+}
+    
 bool UIStyleSheetSystem::StyleSheetMatchesControl(const UIStyleSheet* styleSheet, UIControl* control)
 {
     UIControl* currentControl = control;
@@ -194,7 +225,8 @@ bool UIStyleSheetSystem::SelectorMatchesControl(const UIStyleSheetSelector& sele
 
     for (const FastName& clazz : selector.classes)
     {
-        if (!control->HasClass(clazz))
+        if (!control->HasClass(clazz)
+            && !HasGlobalClass(clazz))
             return false;
     }
 
@@ -208,37 +240,34 @@ void UIStyleSheetSystem::DoForAllPropertyInstances(UIControl* control, uint32 pr
 
     const UIStyleSheetPropertyDescriptor& descr = propertyDB->GetStyleSheetPropertyByIndex(propertyIndex);
 
-    for (const UIStyleSheetPropertyTargetMember& targetMember : descr.targetMembers)
+    switch (descr.group->propertyOwner)
     {
-        switch (targetMember.propertyOwner)
+    case ePropertyOwner::CONTROL:
+    {
+        const InspInfo* typeInfo = control->GetTypeInfo();
+        do
         {
-        case ePropertyOwner::CONTROL:
-        {
-            const InspInfo* typeInfo = control->GetTypeInfo();
-            do
+            if (typeInfo == descr.group->typeInfo)
             {
-                if (typeInfo == targetMember.typeInfo)
-                {
-                    action(control, control, targetMember.memberInfo);
-                    break;
-                }
-                typeInfo = typeInfo->BaseInfo();
-            } while (typeInfo);
+                action(control, control, descr.memberInfo);
+                break;
+            }
+            typeInfo = typeInfo->BaseInfo();
+        } while (typeInfo);
 
-            break;
-        }
-        case ePropertyOwner::BACKGROUND:
-            if (control->GetBackgroundComponentsCount() > 0)
-                action(control, control->GetBackgroundComponent(0), targetMember.memberInfo);
-            break;
-        case ePropertyOwner::COMPONENT:
-            if (UIComponent* component = control->GetComponent(targetMember.componentType))
-                action(control, component, targetMember.memberInfo);
-            break;
-        default:
-            DVASSERT(false);
-            break;
-        }
+        break;
+    }
+    case ePropertyOwner::BACKGROUND:
+        if (control->GetBackgroundComponentsCount() > 0)
+            action(control, control->GetBackgroundComponent(0), descr.memberInfo);
+        break;
+    case ePropertyOwner::COMPONENT:
+        if (UIComponent* component = control->GetComponent(descr.group->componentType))
+            action(control, component, descr.memberInfo);
+        break;
+    default:
+        DVASSERT(false);
+        break;
     }
 }
 

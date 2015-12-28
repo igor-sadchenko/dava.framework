@@ -27,6 +27,7 @@
 =====================================================================================*/
 
 
+#include <thread>
 #include "Concurrency/Thread.h"
 #include "Concurrency/LockGuard.h"
 
@@ -38,20 +39,12 @@
 namespace DAVA
 {
 
-Set<Thread *> Thread::threadList;
-Mutex Thread::threadListMutex;
-
+ConcurrentObject<Set<Thread *>> Thread::threadList;
 Thread::Id Thread::mainThreadId;
-Thread::Id Thread::glThreadId;
 
 void Thread::InitMainThread()
 {
     mainThreadId = GetCurrentId();
-}
-
-void Thread::InitGLThread()
-{
-    glThreadId = GetCurrentId();
 }
 
 bool Thread::IsMainThread()
@@ -62,7 +55,7 @@ bool Thread::IsMainThread()
     }
 
     Id currentId = GetCurrentId();
-    return currentId == mainThreadId || currentId == glThreadId;
+    return currentId == mainThreadId;
 }
 
 Thread *Thread::Create(const Message& msg)
@@ -94,56 +87,56 @@ void Thread::Kill()
 
 void Thread::KillAll()
 {
-    LockGuard<Mutex> locker(threadListMutex);
-    Set<Thread *>::iterator end = threadList.end();
-    for (Set<Thread *>::iterator i = threadList.begin(); i != end; ++i)
+    auto threadListAccessor = threadList.GetAccessor();
+    for (auto& x : *threadListAccessor)
     {
-        (*i)->Kill();
+        x->Kill();
     }
 }
 
 void Thread::CancelAll()
 {
-	LockGuard<Mutex> locker(threadListMutex);
-    Set<Thread *>::iterator end = threadList.end();
-    for (Set<Thread *>::iterator i = threadList.begin(); i != end; ++i)
+    auto threadListAccessor = threadList.GetAccessor();
+    for (auto& x : *threadListAccessor)
     {
-        (*i)->Cancel();
+        x->Cancel();
     }
-}
+} 
 
 
 Thread::Thread()
     : state(STATE_CREATED)
+    , threadPriority(PRIORITY_NORMAL)
     , isCancelling(false)
-    , id(Thread::Id())
+    , stackSize(0)
+    , id(Id())
+    , handle(Handle())
     , name("DAVA::Thread")
 {
-    threadListMutex.Lock();
-    threadList.insert(this);
-    threadListMutex.Unlock();
-
     Init();
+
+    auto threadListAccessor = threadList.GetAccessor();
+    threadListAccessor->insert(this);
 }
 
 Thread::Thread(const Message &msg) : Thread()
 {
     Message message = msg;
     Thread* caller = this;
-    thread_func = [=] { message(caller); };
+    threadFunc = [=] { message(caller); };
 }
 
 Thread::Thread(const Procedure &proc) : Thread()
 {
-    thread_func = proc;
+    threadFunc = proc;
 }
 
 Thread::~Thread()
 {
     Shutdown();
-    threadListMutex.Lock();
-    threadList.erase(this);
-    threadListMutex.Unlock();
+
+    auto threadListAccessor = threadList.GetAccessor();
+    threadListAccessor->erase(this);
 }
     
 void Thread::ThreadFunction(void *param)
@@ -151,11 +144,20 @@ void Thread::ThreadFunction(void *param)
     Thread * t = (Thread *)param;
     t->id = GetCurrentId();
 
-    t->state = STATE_RUNNING;
-    t->thread_func();
+    t->threadFunc();
     t->state = STATE_ENDED;
 
     t->Release();
 }
-    
+
+void Thread::Yield()
+{
+    std::this_thread::yield();
+}
+
+void Thread::Sleep(uint32 timeMS)
+{
+    std::chrono::milliseconds ms(timeMS);
+    std::this_thread::sleep_for(ms);
+}
 };

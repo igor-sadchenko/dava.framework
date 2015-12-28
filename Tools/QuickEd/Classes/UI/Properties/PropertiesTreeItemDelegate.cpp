@@ -57,7 +57,7 @@
 #include "IntegerPropertyDelegate.h"
 #include "FloatPropertyDelegate.h"
 #include "BoolPropertyDelegate.h"
-#include "SpritePropertyDelegate.h"
+#include "ResourceFilePropertyDelegate.h"
 #include "Vector4PropertyDelegate.h"
 
 #include "FontPropertyDelegate.h"
@@ -81,8 +81,11 @@ PropertiesTreeItemDelegate::PropertiesTreeItemDelegate(QObject *parent)
     variantTypeItemDelegates[DAVA::VariantType::TYPE_BOOLEAN] = new BoolPropertyDelegate(this);
     variantTypeItemDelegates[DAVA::VariantType::TYPE_VECTOR4] = new Vector4PropertyDelegate(this);
 
-    propertyNameTypeItemDelegates["Sprite"] = new SpritePropertyDelegate(this);
+    propertyNameTypeItemDelegates["Sprite"] = new ResourceFilePropertyDelegate("*.txt", "/Gfx/", this);
+    propertyNameTypeItemDelegates["bg-sprite"] = new ResourceFilePropertyDelegate("*.txt", "/Gfx/", this);
+    propertyNameTypeItemDelegates["Effect path"] = new ResourceFilePropertyDelegate("*.sc2", "/3d/", this);
     propertyNameTypeItemDelegates["Font"] = new FontPropertyDelegate(this);
+    propertyNameTypeItemDelegates["text-font"] = new FontPropertyDelegate(this);
 }
 
 PropertiesTreeItemDelegate::~PropertiesTreeItemDelegate()
@@ -103,16 +106,6 @@ PropertiesTreeItemDelegate::~PropertiesTreeItemDelegate()
     }
 }
 
-void PropertiesTreeItemDelegate::paint( QPainter * painter, const QStyleOptionViewItem & option, const QModelIndex & index ) const
-{
-    QStyledItemDelegate::paint(painter, option, index);
-}
-
-QSize PropertiesTreeItemDelegate::sizeHint( const QStyleOptionViewItem &option, const QModelIndex &index ) const
-{
-    return QStyledItemDelegate::sizeHint(option, index);
-}
-
 QWidget *PropertiesTreeItemDelegate::createEditor( QWidget * parent, const QStyleOptionViewItem & option, const QModelIndex & index ) const
 {
     AbstractPropertyDelegate *currentDelegate = GetCustomItemDelegateForIndex(index);
@@ -128,7 +121,6 @@ QWidget *PropertiesTreeItemDelegate::createEditor( QWidget * parent, const QStyl
         else
         {
             editorWidget->editWidget = editor;
-            editor->setFocusProxy(editorWidget);
             editorWidget->setFocusPolicy(Qt::WheelFocus);
 
             QHBoxLayout *horizontalLayout = new QHBoxLayout(editorWidget);
@@ -191,11 +183,6 @@ void PropertiesTreeItemDelegate::setModelData(QWidget * editor, QAbstractItemMod
     QStyledItemDelegate::setModelData(editor, model, index);
 }
 
-void PropertiesTreeItemDelegate::updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &option, const QModelIndex &index) const
-{
-    QStyledItemDelegate::updateEditorGeometry(editor, option, index);
-}
-
 bool PropertiesTreeItemDelegate::editorEvent(QEvent *event, QAbstractItemModel *model, const QStyleOptionViewItem &option, const QModelIndex &index)
 {
     return QStyledItemDelegate::editorEvent(event, model, option, index);
@@ -244,7 +231,22 @@ void PropertiesTreeItemDelegate::emitCloseEditor(QWidget * editor, QAbstractItem
     emit closeEditor(editor, hint);
 }
 
+void PropertiesTreeItemDelegate::paint(QPainter* painter, const QStyleOptionViewItem& option,
+                                       const QModelIndex& index) const
+{
+    QStyleOptionViewItemV3 opt = option;
 
+    QStyledItemDelegate::paint(painter, opt, index);
+
+    opt.palette.setCurrentColorGroup(QPalette::Active);
+    QColor color = static_cast<QRgb>(QApplication::style()->styleHint(QStyle::SH_Table_GridLineColor, &opt));
+    painter->save();
+    painter->setPen(QPen(color));
+
+    int right = (option.direction == Qt::LeftToRight) ? option.rect.right() : option.rect.left();
+    painter->drawLine(right, option.rect.y(), right, option.rect.bottom());
+    painter->restore();
+}
 
 PropertyWidget::PropertyWidget( QWidget *parent /*= NULL*/ ) : QWidget(parent), editWidget(NULL)
 {

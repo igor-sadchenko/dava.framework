@@ -41,6 +41,8 @@
 #include "FileSystem/LocalizationIPhone.h"
 #elif defined(__DAVAENGINE_ANDROID__)
 #include "FileSystem/LocalizationAndroid.h"
+#elif defined(__DAVAENGINE_WIN_UAP__)
+#include "FileSystem/LocalizationWinUAP.h"
 #else
 #include "Core/Core.h"
 #endif
@@ -49,7 +51,7 @@
 namespace DAVA 
 {
 //TODO: move it to DateTimeWin32 or remove
-const LocalizationSystem::LanguageLocalePair LocalizationSystem::languageLocaleMap[] =
+const Vector<LocalizationSystem::LanguageLocalePair> LocalizationSystem::languageLocaleMap =
 {
     { "en", "en_US" },
     { "ru", "ru_RU" },
@@ -85,16 +87,19 @@ void LocalizationSystem::InitWithDirectory(const FilePath &directoryPath)
     Init();
 }
 
-void LocalizationSystem::SetDirectory(const FilePath &directoryPath)
+void LocalizationSystem::SetDirectory(const FilePath& dirPath)
 {
-    DVASSERT(directoryPath.IsDirectoryPathname());
-    this->directoryPath = directoryPath;
+    DVASSERT(dirPath.IsDirectoryPathname());
+    directoryPath = dirPath;
 #if defined(__DAVAENGINE_IPHONE__)
 	LocalizationIPhone::SelectPreferedLocalizationForPath(directoryPath);
 #elif defined(__DAVAENGINE_ANDROID__)
     LocalizationAndroid::SelectPreferedLocalization();
+#elif defined(__DAVAENGINE_WIN_UAP__)
+    LocalizationWinUAP::SelectPreferedLocalization();
 #else
-    SetCurrentLocale(Core::Instance()->GetOptions()->GetString("locale", DEFAULT_LOCALE));
+    String loc = Core::Instance()->GetOptions()->GetString("locale", DEFAULT_LOCALE);
+    SetCurrentLocale(loc);
 #endif
 }
 
@@ -109,6 +114,8 @@ String LocalizationSystem::GetDeviceLocale() const
 	return String(LocalizationIPhone::GetDeviceLang());
 #elif defined(__DAVAENGINE_ANDROID__)
     return LocalizationAndroid::GetDeviceLang();
+#elif defined(__DAVAENGINE_WIN_UAP__)
+    return LocalizationWinUAP::GetDeviceLang();
 #else
     return DEFAULT_LOCALE;
 #endif
@@ -129,7 +136,7 @@ void LocalizationSystem::SetCurrentLocale(const String &requestedLangId)
     String actualLangId;
     
     FilePath localeFilePath(directoryPath + (requestedLangId + ".yaml"));
-    if(localeFilePath.Exists())
+    if (FileSystem::Instance()->Exists(localeFilePath))
     {
         actualLangId = requestedLangId;
     }
@@ -145,31 +152,30 @@ void LocalizationSystem::SetCurrentLocale(const String &requestedLangId)
             // ex. not zh-Hans-CN, but can be zh-Hans_CN
             posScriptEnd = requestedLangId.find('_', posPartStart);
         }
-        
+
+        String scriptPart = requestedLangId.substr(posPartStart);
         if(posScriptEnd != String::npos)
         {
             // ex. zh-Hans-CN or zh-Hans_CN try zh-Hans
-            String scriptPart = requestedLangId.substr(posPartStart, posScriptEnd - posPartStart);
-#if defined(__DAVAENGINE_ANDROID__)
-            if (scriptPart == "CN" || (langPart == "zh" && scriptPart == ""))
-            {
-                scriptPart = "Hans";
-            }
-            else if(scriptPart == "TW")
-            {
-                scriptPart = "Hant";
-            }
-#endif
-            langPart = Format("%s-%s", langPart.c_str(), scriptPart.c_str());
+            scriptPart = requestedLangId.substr(posPartStart, posScriptEnd - posPartStart);
         }
-        
+        // ex. zh_CN, zh-HK
+        if (scriptPart == "CN" || (langPart == "zh" && scriptPart == ""))
+        {
+            scriptPart = "Hans";
+        }
+        else if (scriptPart == "TW" || scriptPart == "HK")
+        {
+            scriptPart = "Hant";
+        }
+        langPart = Format("%s-%s", langPart.c_str(), scriptPart.c_str());
+
         Logger::FrameworkDebug("LocalizationSystem requested locale %s is not supported, trying to check part %s", requestedLangId.c_str(), langPart.c_str());
         localeFilePath = directoryPath + (langPart + ".yaml");
-        if(localeFilePath.Exists())
+        if (FileSystem::Instance()->Exists(localeFilePath))
         {
             actualLangId = langPart;
         }
-#if defined(__DAVAENGINE_ANDROID__)
         else if(langPart == "zh")
         {
             // in case zh is returned without country code and no zh.yaml is found - try zh-Hans
@@ -180,13 +186,12 @@ void LocalizationSystem::SetCurrentLocale(const String &requestedLangId)
                 actualLangId = langPart;
             }
         }
-#endif
     }
     
     if(actualLangId.empty())
     {
         localeFilePath = directoryPath + (String(DEFAULT_LOCALE) + ".yaml");
-        if(localeFilePath.Exists())
+        if (FileSystem::Instance()->Exists(localeFilePath))
         {
             actualLangId = DEFAULT_LOCALE;
         }
@@ -251,13 +256,14 @@ LocalizationSystem::StringFile * LocalizationSystem::LoadFromYamlFile(const Stri
 				
 			case YAML_SCALAR_EVENT:
 			{
-				
+				const uint8* str = reinterpret_cast<uint8*>(event.data.scalar.value);
+				size_t size = static_cast<size_t>(event.data.scalar.length);
 				if (isKey)
 				{
-					UTF8Utils::EncodeToWideString((uint8*)event.data.scalar.value, (int32)event.data.scalar.length, key);
+					UTF8Utils::EncodeToWideString(str, size, key);
 				}else 
 				{
-					UTF8Utils::EncodeToWideString((uint8*)event.data.scalar.value, (int32)event.data.scalar.length, value);
+					UTF8Utils::EncodeToWideString(str, size, value);
 					strFile->strings[key] = value;
 				}
 				
@@ -446,14 +452,16 @@ bool LocalizationSystem::GetStringsForCurrentLocale(Map<WideString, WideString>&
     
 String LocalizationSystem::GetCountryCode() const
 {
-    int32 knownLocalesNumber = COUNT_OF(languageLocaleMap);
-	for (int32 i = 0; i < knownLocalesNumber; i ++)
-	{
-		if (languageLocaleMap[i].languageCode == langId)
-		{
-			return languageLocaleMap[i].localeCode;
-		}
-	}
+    auto iter = std::find_if(languageLocaleMap.begin(), languageLocaleMap.end(), [&](const LocalizationSystem::LanguageLocalePair & langPair)
+    {
+        return langPair.languageCode == langId;
+    });
+
+    if (iter != languageLocaleMap.end())
+    {
+        return (*iter).localeCode;
+    }
+
     return "en_US";
 }
 	

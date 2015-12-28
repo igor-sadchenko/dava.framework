@@ -26,13 +26,10 @@
     SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 =====================================================================================*/
 
-
+#include "Document.h"
 #include "DocumentGroup.h"
 #include <QObject>
-#include "Document.h"
 #include <QUndoGroup>
-#include <QDebug>
-
 #include "Debug/DVAssert.h"
 
 DocumentGroup::DocumentGroup(QObject *parent) 
@@ -46,15 +43,16 @@ DocumentGroup::~DocumentGroup()
 {
 }
 
-void DocumentGroup::AddDocument(Document* document)
+void DocumentGroup::InsertDocument(int index, Document* document)
 {
     DVASSERT(nullptr != document);
     undoGroup->addStack(document->GetUndoStack());
     if (documentList.contains(document))
     {
+        DVASSERT(false && "document already exists in document group");
         return;
     }
-    documentList.append(document);
+    documentList.insert(index, document);
 }
 
 void DocumentGroup::RemoveDocument(Document* document)
@@ -85,25 +83,96 @@ void DocumentGroup::SetActiveDocument(Document* document)
     }
     if (nullptr != active) 
     {
-        disconnect(active, &Document::SharedDataChanged, this, &DocumentGroup::SharedDataChanged);
+        active->Deactivate();
+        disconnect(active, &Document::SelectedNodesChanged, this, &DocumentGroup::SelectedNodesChanged);
+        disconnect(active, &Document::CanvasSizeChanged, this, &DocumentGroup::CanvasSizeChanged);
+        disconnect(active, &Document::RootControlPositionChanged, this, &DocumentGroup::CanvasSizeChanged);
+        DocumentDeactivated(active);
     }
     
     active = document;
 
     if (nullptr == active)
     {
-        emit DocumentChanged(nullptr);
         undoGroup->setActiveStack(nullptr);
     }
     else
     {
-        emit DocumentChanged(active->GetContext());
-        
-        connect(active, &Document::SharedDataChanged, this, &DocumentGroup::SharedDataChanged);
+        connect(active, &Document::SelectedNodesChanged, this, &DocumentGroup::SelectedNodesChanged);
+        connect(active, &Document::CanvasSizeChanged, this, &DocumentGroup::CanvasSizeChanged);
+        connect(active, &Document::RootControlPositionChanged, this, &DocumentGroup::RootControlPositionChanged);
 
         undoGroup->setActiveStack(active->GetUndoStack());
+
+        active->SetScale(scale);
+        active->SetEmulationMode(emulationMode);
+        active->SetPixelization(hasPixalization);
     }
     emit ActiveDocumentChanged(document);
+    if (nullptr != active)
+    {
+        active->Activate();
+        DocumentActivated(active);
+    }
+}
+
+void DocumentGroup::SetSelectedNodes(const SelectedNodes& selected, const SelectedNodes& deselected)
+{
+    if (nullptr != active)
+    {
+        active->OnSelectionChanged(selected, deselected);
+    }
+}
+
+void DocumentGroup::SetEmulationMode(bool arg)
+{
+    emulationMode = arg;
+    if (nullptr != active)
+    {
+        active->SetEmulationMode(arg);
+    }
+}
+
+void DocumentGroup::SetPixelization(bool arg)
+{
+    hasPixalization = arg;
+    if (nullptr != active)
+    {
+        active->SetPixelization(arg);
+    }
+}
+
+void DocumentGroup::SetScale(float arg)
+{
+    scale = arg;
+    if (nullptr != active)
+    {
+        active->SetScale(arg);
+    }
+}
+
+void DocumentGroup::OnSelectAllRequested()
+{
+    if (active != nullptr)
+    {
+        active->GetSystemManager()->SelectAllControls.Emit();
+    }
+}
+
+void DocumentGroup::FocusNextChild()
+{
+    if (active != nullptr)
+    {
+        active->GetSystemManager()->FocusNextChild.Emit();
+    }
+}
+
+void DocumentGroup::FocusPreviousChild()
+{
+    if (active != nullptr)
+    {
+        active->GetSystemManager()->FocusPreviousChild.Emit();
+    }
 }
 
 Document *DocumentGroup::GetActiveDocument() const

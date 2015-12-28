@@ -1,9 +1,11 @@
 cmake_minimum_required (VERSION 3.0)
 project ( UnitTests )
 
+set( DAVA_DISABLE_AUTOTESTS true )
+
 # Enable MemoryManagerTest in UnitTests
 # this variable should be defined in all dependant projects (dava framework, etc)
-if( NOT DAVA_MEGASOLUTION )
+if( NOT DAVA_MEGASOLUTION AND NOT DISABLE_MEMORY_PROFILER )
     set ( DAVA_MEMORY_PROFILER 1 )
 endif()
 
@@ -29,18 +31,14 @@ elseif( WIN32 )
 
 endif()
 
-file ( GLOB_RECURSE XIB_LIST "${CMAKE_CURRENT_LIST_DIR}/${PLATFORM_SPECIFIC_FOLDER}/*.xib" )
-
 define_source_folders         ( SRC_ROOT "Classes" ${PLATFORM_SPECIFIC_FOLDER}  )
 generate_source_groups_project( SRC_ROOT "Classes" )
 
 set( APP_DATA                   ${CMAKE_CURRENT_LIST_DIR}/Data )
 
 set( IOS_PLISTT                 ${CMAKE_CURRENT_LIST_DIR}/${PLATFORM_SPECIFIC_FOLDER}/UnitTests-Info.plist )
-set( IOS_XIB                    ${XIB_LIST} )
 
 set( MACOS_PLIST                ${CMAKE_CURRENT_LIST_DIR}/${PLATFORM_SPECIFIC_FOLDER}/Info.plist )
-set( MACOS_XIB                  ${XIB_LIST} )
 
 set( ANDROID_PACKAGE            "com.dava.unittests" )
 set( ANDROID_APP_NAME           "UnitTestApp" )
@@ -53,6 +51,10 @@ set( ADDED_SRC                  ${IOS_ADD_SRC} )
 #uncomment this 2 strings to link libjpeg as additional project.
 #set( LIBRARIES jpeg )
 #add_subdirectory ( "${CMAKE_CURRENT_LIST_DIR}/../../Libs/libjpeg" ${CMAKE_CURRENT_BINARY_DIR}/libjpeg )
+
+if ( WINDOWS_UAP )
+    set ( WIN_STORE_MANIFEST_PACKAGE_GUID "49484B77-9BB6-4FBC-9D56-77593EF55C45" )
+endif ()
 
 setup_main_executable()
 

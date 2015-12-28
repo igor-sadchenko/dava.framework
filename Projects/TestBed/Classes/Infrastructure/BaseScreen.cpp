@@ -53,6 +53,26 @@ BaseScreen::BaseScreen()
     GameCore::Instance()->RegisterScreen(this);
 }
 
+void BaseScreen::SystemScreenSizeDidChanged(const Rect &newFullScreenSize)
+{
+    UIScreen::SystemScreenSizeDidChanged(newFullScreenSize);
+    UnloadResources();
+    LoadResources();
+}
+
+bool BaseScreen::SystemInput(UIEvent *currentInput)
+{
+    if ((currentInput->tid == DVKEY_BACK) && (currentInput->phase == UIEvent::Phase::KEY_DOWN))
+    {
+        OnExitButton(nullptr, nullptr, nullptr);
+    }
+    else
+    {
+        return UIScreen::SystemInput(currentInput);
+    }
+    return true;
+}
+
 void BaseScreen::LoadResources()
 {
     ScopedPtr<FTFont> font (FTFont::Create("~res:/Fonts/korinna.ttf"));

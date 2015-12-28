@@ -64,8 +64,8 @@ void TestCore::Init(TestClassStartedCallback testClassStartedCallback_, TestClas
                     TestStartedCallback testStartedCallback_, TestFinishedCallback testFinishedCallback_,
                     TestFailedCallback testFailedCallback_, TestClassDisabledCallback testClassDisabledCallback_)
 {
-    DVASSERT(testClassStartedCallback_ != 0 && testClassFinishedCallback_ != 0 && testClassDisabledCallback_ != 0);
-    DVASSERT(testStartedCallback_ != 0 && testFinishedCallback_ != 0 && testFailedCallback_ != 0);
+    DVASSERT(testClassStartedCallback_ != nullptr && testClassFinishedCallback_ != nullptr && testClassDisabledCallback_ != nullptr);
+    DVASSERT(testStartedCallback_ != nullptr && testFinishedCallback_ != nullptr && testFailedCallback_ != nullptr);
     testClassStartedCallback = testClassStartedCallback_;
     testClassFinishedCallback = testClassFinishedCallback_;
     testStartedCallback = testStartedCallback_;
@@ -94,7 +94,7 @@ void TestCore::RunOnlyTheseTestClasses(const String& testClassNames)
             auto iter = std::find_if(testClasses.begin(), testClasses.end(), [&testName](const TestClassInfo& testClassInfo) -> bool {
                 return testClassInfo.name == testName;
             });
-            DVASSERT(iter != testClasses.end());
+            DVASSERT(iter != testClasses.end() && "Test classname is not found among registered tests");
             if (iter != testClasses.end())
             {
                 iter->runTest = true;
@@ -116,7 +116,7 @@ void TestCore::DisableTheseTestClasses(const String& testClassNames)
             auto iter = std::find_if(testClasses.begin(), testClasses.end(), [&testName](const TestClassInfo& testClassInfo) -> bool {
                 return testClassInfo.name == testName;
             });
-            DVASSERT(iter != testClasses.end());
+            DVASSERT(iter != testClasses.end() && "Test classname is not found among registered tests");
             if (iter != testClasses.end())
             {
                 iter->runTest = false;

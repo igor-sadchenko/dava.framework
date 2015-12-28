@@ -27,12 +27,14 @@
 =====================================================================================*/
 
 
+#include "Base/Platform.h"
+#if defined(__DAVAENGINE_WINDOWS__)
+
+#include <thread>
 #include "Concurrency/Thread.h"
 
 namespace DAVA
 {
-
-#if defined(__DAVAENGINE_WINDOWS__)
 
 #include <windows.h>
 #include <process.h>
@@ -50,21 +52,16 @@ typedef struct tagTHREADNAME_INFO
 
 void Thread::Init()
 {
-#if !defined(USE_CPP11_CONCURRENCY)
-    handle = NULL;
-#endif
 }
 
 void Thread::Shutdown()
 {
-#if !defined(USE_CPP11_CONCURRENCY)
     DVASSERT(STATE_ENDED == state || STATE_KILLED == state);
     if (handle)
     {
         CloseHandle(handle);
         handle = NULL;
     }
-#endif
 }
 
 void Thread::Start()
@@ -72,34 +69,27 @@ void Thread::Start()
     Retain();
     DVASSERT(STATE_CREATED == state);
 
-#if !defined(USE_CPP11_CONCURRENCY)
-
     auto hdl = _beginthreadex
         (
         0, // Security attributes
-        0, // Stack size
+        static_cast<DWORD>(stackSize),
         ThreadFunc,
         this,
         0,
         0);
 
     handle = reinterpret_cast<HANDLE>(hdl);
-
-#else
-
-    handle = std::thread(ThreadFunc, this);
-
-#endif
-}
-
-void Thread::Sleep(uint32 timeMS)
-{
-    ::Sleep(timeMS);
+    state = STATE_RUNNING;
 }
 
 unsigned __stdcall ThreadFunc(void* param)
 {	
 #if defined(__DAVAENGINE_DEBUG__)
+    /*
+     inside that ifdef we set thread name through raising speciefic exception.
+     https://msdn.microsoft.com/en-us/library/xcb2z8hs.aspx
+     */
+    
     Thread *t = static_cast<Thread *>(param);
 
     THREADNAME_INFO info;
@@ -110,7 +100,7 @@ unsigned __stdcall ThreadFunc(void* param)
 
     __try
     {
-        RaiseException(MS_VC_EXCEPTION, 0, sizeof(info)/sizeof(DWORD), (DWORD*)&info );
+        RaiseException(MS_VC_EXCEPTION, 0, sizeof(info)/sizeof(ULONG_PTR), reinterpret_cast<PULONG_PTR>(&info));
     }
     __except(EXCEPTION_CONTINUE_EXECUTION)
     {
@@ -121,48 +111,76 @@ unsigned __stdcall ThreadFunc(void* param)
 	return 0;
 }
 
-void Thread::Yield()
-{
-    ::SwitchToThread();
-}
-
 void Thread::Join()
 {
-#if !defined(USE_CPP11_CONCURRENCY)
     if (WaitForSingleObjectEx(handle, INFINITE, FALSE) != WAIT_OBJECT_0)
     {
         DAVA::Logger::Error("Thread::Join() failed in WaitForSingleObjectEx");
     }
-#else
-    if (handle.joinable())
-    {
-        handle.join();
-    }
-#endif
 }
 
 void Thread::KillNative()
 {
 #if defined(__DAVAENGINE_WIN_UAP__)
     DAVA::Logger::Warning("Thread::KillNative() is not implemented for Windows Store platform");
-#elif !defined(USE_CPP11_CONCURRENCY)
-    TerminateThread(handle, 0);
 #else
-    HANDLE native_handle = handle.native_handle();
-    handle.detach();
-    TerminateThread(native_handle, 0);
+    TerminateThread(handle, 0);
+    handle = nullptr;
 #endif
 }
 
 Thread::Id Thread::GetCurrentId()
 {
-#if !defined(USE_CPP11_CONCURRENCY)
     return ::GetCurrentThreadId();
+}
+
+bool DAVA::Thread::BindToProcessor(unsigned proc_n)
+{
+    bool success = false;
+
+#if defined(__DAVAENGINE_WIN_UAP__)
+    PROCESSOR_NUMBER proc_number{};
+    proc_number.Group = 0;
+    proc_number.Number = proc_n;
+
+    success = (::SetThreadIdealProcessorEx(handle, &proc_number, nullptr) == TRUE);
 #else
-    return std::this_thread::get_id();
+    DWORD_PTR mask = 1 << proc_n;
+    success = (::SetThreadAffinityMask(handle, mask) == 0);
 #endif
+
+    if (!success)
+    {
+        Logger::FrameworkDebug("Failed bind thread to processor %d, error %d", proc_n, GetLastError());
+    }
+
+    return success;
+}
+    
+void Thread::SetPriority(eThreadPriority priority)
+{
+    DVASSERT(state == STATE_RUNNING);
+    if (threadPriority == priority)
+        return;
+    
+    threadPriority = priority;
+    int prio = THREAD_PRIORITY_NORMAL;
+    switch (threadPriority)
+    {
+        case PRIORITY_LOW:
+            prio = THREAD_PRIORITY_LOWEST;
+            break;
+        case PRIORITY_HIGH:
+            prio = THREAD_PRIORITY_HIGHEST;
+            break;
+    }
+    
+    if (::SetThreadPriority(handle, prio) == 0)
+    {
+        Logger::FrameworkDebug("[Thread::SetPriority]: Cannot set thread priority");
+    }
 }
 
-#endif 
-
 }
+
+#endif

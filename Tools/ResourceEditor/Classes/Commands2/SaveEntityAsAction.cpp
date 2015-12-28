@@ -28,12 +28,62 @@
 
 
 #include "SaveEntityAsAction.h"
-#include "Scene3D/SceneFileV2.h"
+#include "Render/Highlevel/RenderBatch.h"
+#include "Render/Highlevel/RenderObject.h"
+#include "Render/Material/NMaterial.h"
 
+#include "Scene3D/SceneFileV2.h"
+#include "Scene3D/Scene.h"
+#include "Scene3D/Systems/StaticOcclusionSystem.h"
+#include "Scene3D/Components/ComponentHelpers.h"
 #include "Classes/StringConstants.h"
 
 
-SaveEntityAsAction::SaveEntityAsAction(const EntityGroup *_entities, const DAVA::FilePath &_path)
+using namespace DAVA;
+
+class ElegantSceneGuard final
+{
+public:
+    ElegantSceneGuard(Scene* scene_)
+        : scene(scene_)
+    {
+        if (scene)
+        {
+            Set<DataNode*> nodes;
+            scene->GetDataNodes(nodes);
+            for (auto& node : nodes)
+            {
+                dataNodeIDs[node] = node->GetNodeID();
+            }
+
+            globalMaterial = SafeRetain(scene->GetGlobalMaterial());
+            scene->SetGlobalMaterial(nullptr);
+        }
+    }
+
+    ~ElegantSceneGuard()
+    {
+        for (auto& id : dataNodeIDs)
+        {
+            id.first->SetNodeID(id.second);
+        }
+
+        if (scene)
+        {
+            scene->SetGlobalMaterial(globalMaterial);
+            scene = nullptr;
+        }
+
+        SafeRelease(globalMaterial);
+    }
+
+private:
+    Scene* scene = nullptr;
+    NMaterial* globalMaterial = nullptr;
+    Map<DataNode*, uint64> dataNodeIDs;
+};
+
+SaveEntityAsAction::SaveEntityAsAction(const EntityGroup *_entities, const FilePath &_path)
 	: CommandAction(CMDID_ENTITY_SAVE_AS, "Save Entities As")
 	, entities(_entities)
 	, sc2Path(_path)
@@ -44,32 +94,79 @@ SaveEntityAsAction::~SaveEntityAsAction()
 
 void SaveEntityAsAction::Redo()
 {
-	if(!sc2Path.IsEmpty() && sc2Path.IsEqualToExtension(".sc2") &&
-		NULL != entities && entities->Size() > 0)
-	{
-		DAVA::Scene *scene = new DAVA::Scene();
-        Vector3 oldZero = entities->GetCommonZeroPos();
-		for(size_t i = 0; i < entities->Size(); ++i)
-		{
-			DAVA::Entity *entity = entities->GetEntity(i);
-			DAVA::Entity *clone = entity->Clone();
-
-            Vector3 offset = clone->GetLocalTransform().GetTranslationVector() - oldZero;
-            Matrix4 newLocalTransform = clone->GetLocalTransform();
-            newLocalTransform.SetTranslationVector(offset);
-            clone->SetLocalTransform(newLocalTransform);
-
-            DAVA::KeyedArchive *props = GetCustomPropertiesArchieve(clone);
-            if(props)
+	uint32 count = static_cast<uint32>(entities->Size());
+    if (!sc2Path.IsEmpty() && sc2Path.IsEqualToExtension(".sc2") && (nullptr != entities) && (count > 0))
+    {
+        const auto RemoveReferenceToOwner = [](Entity* entity) {
+            KeyedArchive* props = GetCustomPropertiesArchieve(entity);
+            if (nullptr != props)
             {
                 props->DeleteKey(ResourceEditor::EDITOR_REFERENCE_TO_OWNER);
             }
-            
-			scene->AddNode(clone);
+        };
+
+        //reset global material because of global material :)
+        ElegantSceneGuard guard(entities->GetEntity(0)->GetScene());
+
+        ScopedPtr<Scene> scene(new Scene());
+        ScopedPtr<Entity> container(nullptr);
+
+        if (count == 1) // saving of single object
+        {
+            container.reset(entities->GetEntity(0)->Clone());
+            RemoveReferenceToOwner(container);
+            container->SetLocalTransform(Matrix4::IDENTITY);
+        }
+        else // saving of group of objects
+        {
+            container.reset(new Entity());
+
+            const Vector3 oldZero = entities->GetCommonZeroPos();
+            for (uint32 i = 0; i < count; ++i)
+            {
+                ScopedPtr<Entity> clone(entities->GetEntity(i)->Clone());
+
+                const Vector3 offset = clone->GetLocalTransform().GetTranslationVector() - oldZero;
+                Matrix4 newLocalTransform = clone->GetLocalTransform();
+                newLocalTransform.SetTranslationVector(offset);
+                clone->SetLocalTransform(newLocalTransform);
+
+                container->AddNode(clone);
+                RemoveReferenceToOwner(clone);
+            }
+
+            container->SetName(sc2Path.GetFilename().c_str());
 		}
+        DVASSERT(container);
 
-        scene->SaveScene(sc2Path);
+        scene->AddNode(container); //1. Added new items in zero position with identity matrix
+        scene->staticOcclusionSystem->InvalidateOcclusion(); //2. invalidate static occlusion indeces
+        RemoveLightmapsRecursive(container);					//3. Reset lightmaps
+				
+		scene->SaveScene(sc2Path);
+    }
+}
 
-		scene->Release();
+void SaveEntityAsAction::RemoveLightmapsRecursive(Entity *entity) const
+{
+	RenderObject * renderObject = GetRenderObject(entity);
+	if (nullptr != renderObject)
+	{
+		const uint32 batchCount = renderObject->GetRenderBatchCount();
+		for (uint32 b = 0; b < batchCount; ++b)
+		{
+            NMaterial* material = renderObject->GetRenderBatch(b)->GetMaterial();
+            if ((nullptr != material) && material->HasLocalTexture(NMaterialTextureName::TEXTURE_LIGHTMAP))
+            {
+                material->RemoveTexture(NMaterialTextureName::TEXTURE_LIGHTMAP);
+            }
+        }
+	}
+
+	const int32 count = entity->GetChildrenCount();
+	for (int32 ch = 0; ch < count; ++ch)
+	{
+		RemoveLightmapsRecursive(entity->GetChild(ch));
 	}
 }
+

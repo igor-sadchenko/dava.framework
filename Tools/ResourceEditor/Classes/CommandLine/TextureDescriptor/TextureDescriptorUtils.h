@@ -30,12 +30,8 @@
 #ifndef __TEXTURE_DESCRIPTOR_UTILS_H__
 #define __TEXTURE_DESCRIPTOR_UTILS_H__
 
-#include "DAVAEngine.h"
 #include "CommandLine/SceneUtils/SceneUtils.h"
 #include "TextureCompression/TextureConverter.h"
-
-
-//using namespace DAVA;
 
 class TextureDescriptorUtils
 {
@@ -46,7 +42,7 @@ public:
 	static void SetCompressionParamsForFolder(const DAVA::FilePath &folderPathname, const DAVA::Map<DAVA::eGPUFamily, DAVA::TextureDescriptor::Compression> & compressionParams, bool convertionEnabled, bool force, DAVA::TextureConverter::eConvertQuality quality, bool generateMipMaps);
 
 	static void SetCompressionParams(const DAVA::FilePath &descriptorPathname, const DAVA::Map<DAVA::eGPUFamily, DAVA::TextureDescriptor::Compression> & compressionParams, bool convertionEnabled, bool force, DAVA::TextureConverter::eConvertQuality quality, bool generateMipMaps);
-    static bool CreateDescriptorIfNeed(const DAVA::FilePath &pngPathname);
+    static bool CreateDescriptorIfNeed(const DAVA::FilePath &originalPathname);
     
 private:
     

@@ -43,6 +43,51 @@ const ParticleLayer::LayerTypeNamesInfo ParticleLayer::layerTypeNamesInfoMap[] =
 	{ TYPE_SUPEREMITTER_PARTICLES, "superEmitter" }
 };
 
+/*the following code is legacy compatibility to load original particle blending nodes*/
+enum eBlendMode
+{
+    BLEND_NONE = 0,
+    BLEND_ZERO,
+    BLEND_ONE,
+    BLEND_DST_COLOR,
+    BLEND_ONE_MINUS_DST_COLOR,
+    BLEND_SRC_ALPHA,
+    BLEND_ONE_MINUS_SRC_ALPHA,
+    BLEND_DST_ALPHA,
+    BLEND_ONE_MINUS_DST_ALPHA,
+    BLEND_SRC_ALPHA_SATURATE,
+    BLEND_SRC_COLOR,
+    BLEND_ONE_MINUS_SRC_COLOR,
+
+    BLEND_MODE_COUNT,
+};
+const String BLEND_MODE_NAMES[BLEND_MODE_COUNT] =
+{
+  "BLEND_NONE",
+  "BLEND_ZERO",
+  "BLEND_ONE",
+  "BLEND_DST_COLOR",
+  "BLEND_ONE_MINUS_DST_COLOR",
+  "BLEND_SRC_ALPHA",
+  "BLEND_ONE_MINUS_SRC_ALPHA",
+  "BLEND_DST_ALPHA",
+  "BLEND_ONE_MINUS_DST_ALPHA",
+  "BLEND_SRC_ALPHA_SATURATE",
+  "BLEND_SRC_COLOR",
+  "BLEND_ONE_MINUS_SRC_COLOR"
+};
+
+eBlendMode GetBlendModeByName(const String& blendStr)
+{
+    for (uint32 i = 0; i < BLEND_MODE_COUNT; i++)
+        if (blendStr == BLEND_MODE_NAMES[i])
+            return (eBlendMode)i;
+
+    return BLEND_MODE_COUNT;
+}
+
+/*end of legacy compatibility code*/
+
 ParticleLayer::ParticleLayer() 	
 	: sprite(0)
 	, innerEmitter(NULL)
@@ -72,13 +117,12 @@ ParticleLayer::ParticleLayer()
 	
 	angle = 0;
 	angleVariation = 0;
-	
-	srcBlendFactor = BLEND_SRC_ALPHA;
-	dstBlendFactor = BLEND_ONE;
-	enableFog = true;
-	enableFrameBlend = false;
-	inheritPosition = false;
-	type = TYPE_PARTICLES;
+
+    blending = BLENDING_ALPHABLEND;
+    enableFog = true;
+    enableFrameBlend = false;
+    inheritPosition = false;
+    type = TYPE_PARTICLES;
 
     degradeStrategy = DEGRADE_KEEP;
     
@@ -109,8 +153,6 @@ ParticleLayer::ParticleLayer()
 
 ParticleLayer::~ParticleLayer()
 {
-	
-	SafeRelease(sprite);
 	SafeRelease(innerEmitter);
 	
 	CleanupForces();
@@ -196,43 +238,40 @@ ParticleLayer * ParticleLayer::Clone()
 		dstLayer->innerEmitter = static_cast<ParticleEmitter*>(innerEmitter->Clone());
 	
 	dstLayer->layerName = layerName;
-	
-	dstLayer->srcBlendFactor = srcBlendFactor;
-	dstLayer->dstBlendFactor = dstBlendFactor;
-	dstLayer->enableFog=enableFog;
-	dstLayer->enableFrameBlend = enableFrameBlend;
-	dstLayer->inheritPosition = inheritPosition;
-	dstLayer->startTime = startTime;
-	dstLayer->endTime = endTime;
-	
-	
-	dstLayer->isLooped = isLooped;
-	dstLayer->deltaTime = deltaTime;
-	dstLayer->deltaVariation = deltaVariation;
-	dstLayer->loopVariation = loopVariation;
-	dstLayer->loopEndTime = loopEndTime;
-	
-	dstLayer->isDisabled = isDisabled;
 
-	dstLayer->type = type;
+    dstLayer->blending = blending;
+    dstLayer->enableFog = enableFog;
+    dstLayer->enableFrameBlend = enableFrameBlend;
+    dstLayer->inheritPosition = inheritPosition;
+    dstLayer->startTime = startTime;
+    dstLayer->endTime = endTime;
+
+    dstLayer->isLooped = isLooped;
+    dstLayer->deltaTime = deltaTime;
+    dstLayer->deltaVariation = deltaVariation;
+    dstLayer->loopVariation = loopVariation;
+    dstLayer->loopEndTime = loopEndTime;
+
+    dstLayer->isDisabled = isDisabled;
+
+    dstLayer->type = type;
     dstLayer->degradeStrategy = degradeStrategy;
-	SafeRelease(dstLayer->sprite);
-	dstLayer->sprite = SafeRetain(sprite);
-	dstLayer->layerPivotPoint = layerPivotPoint;	
-	dstLayer->layerPivotSizeOffsets = layerPivotSizeOffsets;
+    dstLayer->sprite = sprite;
+    dstLayer->layerPivotPoint = layerPivotPoint;
+    dstLayer->layerPivotSizeOffsets = layerPivotSizeOffsets;
 
-	dstLayer->frameOverLifeEnabled = frameOverLifeEnabled;
-	dstLayer->frameOverLifeFPS = frameOverLifeFPS;
-	dstLayer->randomFrameOnStart = randomFrameOnStart;
-	dstLayer->loopSpriteAnimation = loopSpriteAnimation;
-	dstLayer->particleOrientation = particleOrientation;
+    dstLayer->frameOverLifeEnabled = frameOverLifeEnabled;
+    dstLayer->frameOverLifeFPS = frameOverLifeFPS;
+    dstLayer->randomFrameOnStart = randomFrameOnStart;
+    dstLayer->loopSpriteAnimation = loopSpriteAnimation;
+    dstLayer->particleOrientation = particleOrientation;
 
-	dstLayer->scaleVelocityBase = scaleVelocityBase;
-	dstLayer->scaleVelocityFactor = scaleVelocityFactor;
-    
-	dstLayer->spritePath = spritePath;
-	dstLayer->activeLODS = activeLODS;
-	dstLayer->isLong = isLong;
+    dstLayer->scaleVelocityBase = scaleVelocityBase;
+    dstLayer->scaleVelocityFactor = scaleVelocityFactor;
+
+    dstLayer->spritePath = spritePath;
+    dstLayer->activeLODS = activeLODS;
+    dstLayer->isLong = isLong;
 
 	return dstLayer;
 }
@@ -335,17 +374,14 @@ void ParticleLayer::UpdateLayerTime(float32 startTime, float32 endTime)
 	UpdatePropertyLineKeys(PropertyLineHelper::GetValueLine(angleVariation).Get(), startTime, translateTime, endTime);
 }
 
+void ParticleLayer::SetSprite(const FilePath& path)
+{
+    spritePath = path;
 
-
-void ParticleLayer::SetSprite(Sprite * _sprite)
-{    
-	SafeRelease(sprite);
-	sprite = SafeRetain(_sprite);
-
-	if(sprite)
-	{
-		spritePath = sprite->GetRelativePathname();
-	}
+    if (type != TYPE_SUPEREMITTER_PARTICLES)
+    {
+        sprite.reset(Sprite::Create(spritePath));
+    }
 }
 
 void ParticleLayer::SetPivotPoint(Vector2 pivot)
@@ -394,30 +430,22 @@ void ParticleLayer::LoadFromYaml(const FilePath & configPath, const YamlNode * n
 
 	const YamlNode * pivotPointNode = node->Get("pivotPoint");
 	
-    SetSprite(NULL);
 	const YamlNode * spriteNode = node->Get("sprite");
 	if (spriteNode && !spriteNode->AsString().empty())
 	{
 		// Store the absolute path to sprite.
-		spritePath = FilePath(configPath.GetDirectory(), spriteNode->AsString());
-
-        if (type != TYPE_SUPEREMITTER_PARTICLES)
+        FilePath spritePath = configPath.GetDirectory() + spriteNode->AsString();
+        SetSprite(spritePath);
+    }
+    if (pivotPointNode)
+    {
+        Vector2 _pivot = pivotPointNode->AsPoint();
+        if ((format == 0) && sprite)
         {
-		    Sprite * _sprite = Sprite::Create(spritePath);
-		    SetSprite(_sprite);
-            SafeRelease(_sprite);
+            float32 ny = -_pivot.x / sprite->GetWidth() * 2;
+            float32 nx = -_pivot.y / sprite->GetHeight() * 2;
+            _pivot.Set(nx, ny);
         }
-	}	
-	if(pivotPointNode)
-	{
-		Vector2 _pivot = pivotPointNode->AsPoint();
-		if ((format == 0)&&sprite)
-		{
-			
-			float32 ny=-_pivot.x/sprite->GetWidth()*2;
-			float32 nx=-_pivot.y/sprite->GetHeight()*2;
-			_pivot.Set(nx, ny);
-		}
 
 		SetPivotPoint(_pivot);
 	}
@@ -555,67 +583,83 @@ void ParticleLayer::LoadFromYaml(const FilePath & configPath, const YamlNode * n
 	if (randomSpinDirectionNode)
 	{
 		randomSpinDirection = randomSpinDirectionNode->AsBool();
-	}	
+    }
 
-	//read blend node for backward compatibility with old effect files
-	const YamlNode * blend = node->Get("blend");
-	if (blend)
-	{
-		if (blend->AsString() == "alpha")
-		{
-			srcBlendFactor = BLEND_SRC_ALPHA;
-			dstBlendFactor = BLEND_ONE_MINUS_SRC_ALPHA;
-		}
-		if (blend->AsString() == "add")
-		{
-			srcBlendFactor = BLEND_SRC_ALPHA;
-			dstBlendFactor = BLEND_ONE;
-		}			
-	}
-	
-	//or set blending factors directly
-	const YamlNode * blendSrcNode = node->Get("srcBlendFactor");
-	const YamlNode * blendDestNode = node->Get("dstBlendFactor");
-	if(blendSrcNode && blendDestNode)
-	{
-		srcBlendFactor = GetBlendModeByName(blendSrcNode->AsString());
-		dstBlendFactor = GetBlendModeByName(blendDestNode->AsString());	
-	}
+    blending = BLENDING_ALPHABLEND; //default
 
-	const YamlNode * fogNode = node->Get("enableFog");
-	if (fogNode)
-	{
-		enableFog = fogNode->AsBool();
-	}
+    //read blend node for backward compatibility with old effect files
+    const YamlNode* blend = node->Get("blend");
+    if (blend)
+    {
+        if (blend->AsString() == "alpha")
+        {
+            blending = BLENDING_ALPHABLEND;
+        }
+        if (blend->AsString() == "add")
+        {
+            blending = BLENDING_ALPHA_ADDITIVE;
+        }
+    }
 
-	const YamlNode * frameBlendNode = node->Get("enableFrameBlend");	
-	if (frameBlendNode)
-	{
-		enableFrameBlend = frameBlendNode->AsBool();
-	}		
+    const YamlNode* blendSrcNode = node->Get("srcBlendFactor");
+    const YamlNode* blendDestNode = node->Get("dstBlendFactor");
 
-	startTime = 0.0f;
-	endTime = 100000000.0f;
-	const YamlNode * startTimeNode = node->Get("startTime");
-	if (startTimeNode)
-		startTime = startTimeNode->AsFloat();
+    if (blendSrcNode && blendDestNode)
+    {
+        eBlendMode srcBlendFactor = GetBlendModeByName(blendSrcNode->AsString());
+        eBlendMode dstBlendFactor = GetBlendModeByName(blendDestNode->AsString());
 
-	const YamlNode * endTimeNode = node->Get("endTime");
-	if (endTimeNode)
-		endTime = endTimeNode->AsFloat();
-		
-	isLooped = false;	
-	deltaTime = 0.0f;
-	deltaVariation = 0.0f;
-	loopVariation = 0.0f;
-	
-	const YamlNode * isLoopedNode = node->Get("isLooped");
-	if (isLoopedNode)
-		isLooped = isLoopedNode->AsBool();
-		
-	const YamlNode * deltaTimeNode = node->Get("deltaTime");
-	if (deltaTimeNode)
-		deltaTime = deltaTimeNode->AsFloat();
+        if ((srcBlendFactor == BLEND_ONE) && (dstBlendFactor == BLEND_ONE))
+            blending = BLENDING_ADDITIVE;
+        else if ((srcBlendFactor == BLEND_SRC_ALPHA) && (dstBlendFactor == BLEND_ONE))
+            blending = BLENDING_ALPHA_ADDITIVE;
+        else if ((srcBlendFactor == BLEND_ONE_MINUS_DST_COLOR) && (dstBlendFactor == BLEND_ONE))
+            blending = BLENDING_SOFT_ADDITIVE;
+        else if ((srcBlendFactor == BLEND_DST_COLOR) && (dstBlendFactor == BLEND_ZERO))
+            blending = BLENDING_MULTIPLICATIVE;
+        else if ((srcBlendFactor == BLEND_DST_COLOR) && (dstBlendFactor == BLEND_SRC_COLOR))
+            blending = BLENDING_STRONG_MULTIPLICATIVE;
+    }
+
+    //end of legacy
+
+    const YamlNode* blendingNode = node->Get("blending");
+    if (blendingNode)
+        blending = (eBlending)blendingNode->AsInt();
+    const YamlNode* fogNode = node->Get("enableFog");
+    if (fogNode)
+    {
+        enableFog = fogNode->AsBool();
+    }
+
+    const YamlNode* frameBlendNode = node->Get("enableFrameBlend");
+    if (frameBlendNode)
+    {
+        enableFrameBlend = frameBlendNode->AsBool();
+    }
+
+    startTime = 0.0f;
+    endTime = 100000000.0f;
+    const YamlNode* startTimeNode = node->Get("startTime");
+    if (startTimeNode)
+        startTime = startTimeNode->AsFloat();
+
+    const YamlNode* endTimeNode = node->Get("endTime");
+    if (endTimeNode)
+        endTime = endTimeNode->AsFloat();
+
+    isLooped = false;
+    deltaTime = 0.0f;
+    deltaVariation = 0.0f;
+    loopVariation = 0.0f;
+
+    const YamlNode* isLoopedNode = node->Get("isLooped");
+    if (isLoopedNode)
+        isLooped = isLoopedNode->AsBool();
+
+    const YamlNode* deltaTimeNode = node->Get("deltaTime");
+    if (deltaTimeNode)
+        deltaTime = deltaTimeNode->AsFloat();
 		
 	const YamlNode * deltaVariationNode = node->Get("deltaVariation");
 	if (deltaVariationNode)
@@ -718,14 +762,13 @@ void ParticleLayer::SaveToYamlNode(const FilePath & configPath, YamlNode* parent
 	    PropertyLineYamlWriter::WritePropertyValueToYamlNode<String>(layerNode, "sprite", relativePath);
     }
 
-	layerNode->Add("srcBlendFactor", BLEND_MODE_NAMES[(int32)srcBlendFactor]);
-	layerNode->Add("dstBlendFactor", BLEND_MODE_NAMES[(int32)dstBlendFactor]);
+    layerNode->Add("blending", blending);
 
-	layerNode->Add("enableFog", enableFog);	
-	layerNode->Add("enableFrameBlend", enableFrameBlend);	
+    layerNode->Add("enableFog", enableFog);
+    layerNode->Add("enableFrameBlend", enableFrameBlend);
 
-	layerNode->Add("scaleVelocityBase", scaleVelocityBase);
-	layerNode->Add("scaleVelocityFactor", scaleVelocityFactor);
+    layerNode->Add("scaleVelocityBase", scaleVelocityBase);
+    layerNode->Add("scaleVelocityFactor", scaleVelocityFactor);
 
     PropertyLineYamlWriter::WritePropertyLineToYamlNode<float32>(layerNode, "life", this->life);
     PropertyLineYamlWriter::WritePropertyLineToYamlNode<float32>(layerNode, "lifeVariation", this->lifeVariation);

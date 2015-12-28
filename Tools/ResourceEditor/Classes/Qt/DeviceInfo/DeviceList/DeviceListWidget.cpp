@@ -41,9 +41,9 @@
 #include "FileSystem/FilePath.h"
 #include "FileSystem/File.h"
 
-#include "Classes/Qt/DeviceInfo/DeviceInfo/ProfilingSession.h"
-#include "Classes/Qt/DeviceInfo/DeviceInfo/MemProfWidget.h"
-#include "Classes/Qt/DeviceInfo/DeviceInfo/MemProfController.h"
+#include "Qt/DeviceInfo/MemoryTool/ProfilingSession.h"
+#include "Qt/DeviceInfo/MemoryTool/MemProfController.h"
+#include "Qt/DeviceInfo/MemoryTool/Widgets/MemProfWidget.h"
 
 using namespace DAVA;
 
@@ -58,6 +58,7 @@ DeviceListWidget::DeviceListWidget( QWidget *parent )
     connect( ui->showLog, &QPushButton::clicked, this, &DeviceListWidget::showLogClicked );
 
     connect(ui->viewDump, &QPushButton::clicked, this, &DeviceListWidget::OnViewDump);
+    connect(ui->discoverDevice, &QPushButton::clicked, this, &DeviceListWidget::OnDeviceDiscover);
 }
 
 DeviceListWidget::~DeviceListWidget() {}
@@ -79,5 +80,14 @@ void DeviceListWidget::OnViewDump()
         {
             delete obj;
         }
+    }
+}
+
+void DeviceListWidget::OnDeviceDiscover()
+{
+    QString s = ui->ipaddr->text().trimmed();
+    if (!s.isEmpty())
+    {
+        emit deviceDiscoverClicked(s);
     }
 }

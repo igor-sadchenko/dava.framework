@@ -31,6 +31,7 @@
 
 #include "Base/Platform.h"
 
+#include "FileSystem/FileAPIHelper.h"
 #include "FileSystem/FileSystem.h"
 #include "FileSystem/FileList.h"
 #include "Debug/DVAssert.h"
@@ -53,6 +54,9 @@
 #   include <Shlobj.h>
 #   include <tchar.h>
 #   include <process.h>
+#   if defined(__DAVAENGINE_WIN_UAP__)
+#       include "Platform/DeviceInfo.h"
+#   endif
 #elif defined(__DAVAENGINE_ANDROID__)
 #   include "Platform/TemplateAndroid/CorePlatformAndroid.h"
 #   include <unistd.h>
@@ -133,7 +137,8 @@ FileSystem::eCreateDirectoryResult FileSystem::CreateExactDirectory(const FilePa
         return DIRECTORY_EXISTS;
     
 #ifdef __DAVAENGINE_WINDOWS__
-    BOOL res = ::CreateDirectoryA(filePath.GetAbsolutePathname().c_str(), 0);
+    FilePath::NativeStringType path = filePath.GetNativeAbsolutePathname();
+    BOOL res = ::CreateDirectoryW(path.c_str(), 0);
     return (res == 0) ? DIRECTORY_CANT_CREATE : DIRECTORY_CREATED;
 #elif defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_IPHONE__) || defined(__DAVAENGINE_ANDROID__)
     int res = mkdir(filePath.GetAbsolutePathname().c_str(), 0777);
@@ -145,21 +150,23 @@ bool FileSystem::CopyFile(const FilePath & existingFile, const FilePath & newFil
 {
     DVASSERT(newFile.GetType() != FilePath::PATH_IN_RESOURCES);
 
+#ifdef __DAVAENGINE_WINDOWS__
+    FilePath::NativeStringType existingFilePath = existingFile.GetNativeAbsolutePathname();
+    FilePath::NativeStringType newFilePath = newFile.GetNativeAbsolutePathname();
+#endif
+
 #ifdef __DAVAENGINE_WIN32__
 
-	BOOL ret = ::CopyFileA(existingFile.GetAbsolutePathname().c_str(), newFile.GetAbsolutePathname().c_str(), !overwriteExisting);
-	return ret != 0;
+    BOOL ret = ::CopyFileW(existingFilePath.c_str(), newFilePath.c_str(), !overwriteExisting);
+    return ret != 0;
 
 #elif defined(__DAVAENGINE_WIN_UAP__)
 
-    WideString existingFilePath = StringToWString(existingFile.GetAbsolutePathname());
-    WideString newFilePath = StringToWString(newFile.GetAbsolutePathname());
     COPYFILE2_EXTENDED_PARAMETERS params = 
     { 
         /* dwSize */      sizeof(COPYFILE2_EXTENDED_PARAMETERS), 
         /* dwCopyFlags */ overwriteExisting ? DWORD(0) : COPY_FILE_FAIL_IF_EXISTS 
     };
-
     return ::CopyFile2(existingFilePath.c_str(), newFilePath.c_str(), &params) == S_OK;
 
 #elif defined(__DAVAENGINE_ANDROID__)
@@ -215,44 +222,29 @@ bool FileSystem::MoveFile(const FilePath & existingFile, const FilePath & newFil
 {
     DVASSERT(newFile.GetType() != FilePath::PATH_IN_RESOURCES);
 
-#if defined(__DAVAENGINE_WINDOWS__)
+    FilePath::NativeStringType toFile = newFile.GetNativeAbsolutePathname();
+    FilePath::NativeStringType fromFile = existingFile.GetNativeAbsolutePathname();
 
-	DWORD flags = (overwriteExisting) ? MOVEFILE_REPLACE_EXISTING : 0;
-	// Add flag MOVEFILE_COPY_ALLOWED to allow file moving between different volumes
-    // Without this flags MoveFileEx fails and GetLastError return ERROR_NOT_SAME_DEVICE
-    // see https://msdn.microsoft.com/en-us/library/windows/desktop/aa365240%28v=vs.85%29.aspx?f=255&MSPPError=-2147217396
-    flags |= MOVEFILE_COPY_ALLOWED;
-
-#if defined(__DAVAENGINE_WIN32__)
-
-    BOOL ret = ::MoveFileExA(existingFile.GetAbsolutePathname().c_str(), newFile.GetAbsolutePathname().c_str(), flags);
-
-#elif defined(__DAVAENGINE_WIN_UAP__)
-
-    WideString existingFileWide = StringToWString(existingFile.GetAbsolutePathname());
-    WideString newFileWide = StringToWString(newFile.GetAbsolutePathname());
-    BOOL ret = ::MoveFileExW(existingFileWide.c_str(), newFileWide.c_str(), flags);
-
-#endif
-
-	return	ret != 0;
-
-#elif defined(__DAVAENGINE_ANDROID__)
-	if (!overwriteExisting && access(newFile.GetAbsolutePathname().c_str(), 0) != -1)
-	{
-		return false;
-	}
-	remove(newFile.GetAbsolutePathname().c_str());
-	int ret = rename(existingFile.GetAbsolutePathname().c_str(), newFile.GetAbsolutePathname().c_str());
-	return ret == 0;
-#else //iphone & macos
-	int flags = COPYFILE_ALL | COPYFILE_MOVE;
-	if(!overwriteExisting)
-		flags |= COPYFILE_EXCL;
-	
-	int ret = copyfile(existingFile.GetAbsolutePathname().c_str(), newFile.GetAbsolutePathname().c_str(), NULL, flags);
-	return ret==0;
-#endif //PLATFORMS
+    if (overwriteExisting)
+    {
+        FileAPI::RemoveFile(toFile.c_str());
+    }
+    else
+    {
+        if (IsFile(newFile))
+        {
+            return false;
+        }
+    }
+    int result = FileAPI::RenameFile(fromFile.c_str(), toFile.c_str());
+    bool error = (0 != result);
+    if (error)
+    {
+        const char* errorReason = strerror(errno);
+        Logger::Error("rename failed (\"%s\" -> \"%s\") with error: %s",
+            fromFile.c_str(), toFile.c_str(), errorReason);
+    }
+    return !error;
 }
 
 
@@ -287,8 +279,8 @@ bool FileSystem::DeleteFile(const FilePath & filePath)
     DVASSERT(filePath.GetType() != FilePath::PATH_IN_RESOURCES);
 
 	// function unlink return 0 on success, -1 on error
-	int res = remove(filePath.GetAbsolutePathname().c_str());
-	return (res == 0);
+    int res = FileAPI::RemoveFile(filePath.GetNativeAbsolutePathname().c_str());
+    return (res == 0);
 }
 	
 bool FileSystem::DeleteDirectory(const FilePath & path, bool isRecursive)
@@ -321,16 +313,10 @@ bool FileSystem::DeleteDirectory(const FilePath & path, bool isRecursive)
 	}
 	SafeRelease(fileList);
 #ifdef __DAVAENGINE_WINDOWS__
-	String sysPath = path.GetAbsolutePathname();
-	int32 chmodres = _chmod(sysPath.c_str(), _S_IWRITE); // change read-only file mode
-	int32 res = _rmdir(sysPath.c_str());
-	return (res == 0);
-	/*int32 res = ::RemoveDirectoryA(path.c_str());
-	if (res == 0)
-	{
-		Logger::Warning("Failed to delete directory: %s error: 0x%x", path.c_str(), GetLastError());
-	}
-	return (res != 0);*/
+    FilePath::NativeStringType sysPath = path.GetNativeAbsolutePathname();
+    int32 chmodres = _wchmod(sysPath.c_str(), _S_IWRITE); // change read-only file mode
+    int32 res = _wrmdir(sysPath.c_str());
+    return (res == 0);
 #elif defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_IPHONE__) || defined(__DAVAENGINE_ANDROID__)
 	int32 res = rmdir(path.GetAbsolutePathname().c_str());
 	return (res == 0);
@@ -395,27 +381,21 @@ const FilePath & FileSystem::GetCurrentWorkingDirectory()
 {
     String path;
 
-#if defined(__DAVAENGINE_WIN_UAP__)
+#if defined(__DAVAENGINE_WINDOWS__)
 
     Array<wchar_t, MAX_PATH> tempDir;
-    ::GetCurrentDirectoryW(tempDir.size(), tempDir.data());
-    path = WStringToString(tempDir.data());
-
-#elif defined(__DAVAENGINE_WIN32__)
-
-    Array<char, MAX_PATH> tempDir;
-    ::GetCurrentDirectoryA(tempDir.size(), tempDir.data());
-    path = tempDir.data();
+    ::GetCurrentDirectoryW(MAX_PATH, tempDir.data());
+    currentWorkingDirectory = FilePath::FromNativeString(tempDir.data());
 
 #elif defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_IPHONE__) || defined(__DAVAENGINE_ANDROID__)
 
     Array<char, PATH_MAX> tempDir;
-    getcwd(tempDir.data(), tempDir.size());
+    getcwd(tempDir.data(), PATH_MAX);
     path = tempDir.data();
+    currentWorkingDirectory = FilePath(std::move(path));
 
 #endif //PLATFORMS
 
-    currentWorkingDirectory = FilePath(std::move(path));
     return currentWorkingDirectory.MakeDirectoryPathname();
 }
 
@@ -423,13 +403,13 @@ FilePath FileSystem::GetCurrentExecutableDirectory()
 {
     FilePath currentExecuteDirectory;
 
-#if defined(__DAVAENGINE_WIN32__)
-    std::array<char, MAX_PATH> tempDir;
-    ::GetModuleFileNameA( NULL, tempDir.data(), tempDir.size() );
-    currentExecuteDirectory = FilePath(tempDir.data()).GetDirectory();
+#if defined(__DAVAENGINE_WINDOWS__)
+    Array<wchar_t, MAX_PATH> tempDir;
+    ::GetModuleFileNameW(nullptr, tempDir.data(), MAX_PATH);
+    currentExecuteDirectory = FilePath::FromNativeString(tempDir.data()).GetDirectory();
 #elif defined(__DAVAENGINE_MACOS__)
-    std::array<char, PATH_MAX> tempDir;
-    proc_pidpath(getpid(), tempDir.data(), tempDir.size());
+    Array<char, PATH_MAX> tempDir;
+    proc_pidpath(getpid(), tempDir.data(), PATH_MAX);
     currentExecuteDirectory = FilePath(dirname(tempDir.data()));
 #else
     const String& str = Core::Instance()->GetCommandLine().at(0);
@@ -443,57 +423,64 @@ bool FileSystem::SetCurrentWorkingDirectory(const FilePath & newWorkingDirectory
 {
     DVASSERT(newWorkingDirectory.IsDirectoryPathname());
     
-#if defined(__DAVAENGINE_WIN_UAP__)
-    WideString path = StringToWString(newWorkingDirectory.GetAbsolutePathname());
+#if defined(__DAVAENGINE_WINDOWS__)
+    FilePath::NativeStringType path = newWorkingDirectory.GetNativeAbsolutePathname();
     BOOL res = ::SetCurrentDirectoryW(path.c_str());
     return (res != 0);
-#elif defined(__DAVAENGINE_WIN32__)
-	BOOL res = ::SetCurrentDirectoryA(newWorkingDirectory.GetAbsolutePathname().c_str());
-	return (res != 0);
 #elif defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_IPHONE__) || defined(__DAVAENGINE_ANDROID__)
     
 	return (chdir(newWorkingDirectory.GetAbsolutePathname().c_str()) == 0);
 #endif //PLATFORMS
 	return false; 
 }
-  
-bool FileSystem::IsFile(const FilePath & pathToCheck)
+
+bool FileSystem::IsFile(const FilePath& pathToCheck) const
 {
 #if defined(__DAVAENGINE_ANDROID__)
-	const String& path = pathToCheck.GetAbsolutePathname();
-	if (IsAPKPath(path))
-		return (fileSet.find(path) != fileSet.end());
+    const String& path = pathToCheck.GetAbsolutePathname();
+    if (IsAPKPath(path))
+    {
+        return (fileSet.find(path) != fileSet.end());
+    }
 #endif
-	struct stat s;
-	if(stat(pathToCheck.GetAbsolutePathname().c_str(),&s) == 0)
-	{
-		return (0 != (s.st_mode & S_IFREG));
-	}
+    FileAPI::Stat s;
+    FilePath::NativeStringType pathStr = pathToCheck.GetNativeAbsolutePathname();
+    if (FileAPI::FileStat(pathStr.c_str(), &s) == 0)
+    {
+        return (0 != (s.st_mode & S_IFREG));
+    }
 
- 	return false;
+    return false;
 }
 
-bool FileSystem::IsDirectory(const FilePath & pathToCheck)
+bool FileSystem::IsDirectory(const FilePath& pathToCheck) const
 {
 #if defined (__DAVAENGINE_WIN32__)
-	DWORD stats = GetFileAttributesA(pathToCheck.GetAbsolutePathname().c_str());
-	return (stats != -1) && (0 != (stats & FILE_ATTRIBUTE_DIRECTORY));
+    FilePath::NativeStringType path = pathToCheck.GetNativeAbsolutePathname();
+    DWORD stats = GetFileAttributesW(path.c_str());
+    return (stats != -1) && (0 != (stats & FILE_ATTRIBUTE_DIRECTORY));
 #else //defined (__DAVAENGINE_WIN32__)
 #if defined(__DAVAENGINE_ANDROID__)
     
 	String path = pathToCheck.GetAbsolutePathname();
-	if (path.length() &&
-		path.at(path.length() - 1) == '/')
-		path.erase(path.begin() + path.length() - 1);
-	if (IsAPKPath(path))
-		return (dirSet.find(path) != dirSet.end());
+    if (path.length() && path.at(path.length() - 1) == '/')
+    {
+        path.erase(path.begin() + path.length() - 1);
+    }
+
+    if (IsAPKPath(path))
+    {
+        return (dirSet.find(path) != dirSet.end());
+    }
+
 #endif //#if defined(__DAVAENGINE_ANDROID__)
 
-	struct stat s;
-	if(stat(pathToCheck.GetAbsolutePathname().c_str(), &s) == 0)
-	{
-		return (0 != (s.st_mode & S_IFDIR));
-	}
+    FileAPI::Stat s;
+    FilePath::NativeStringType pathToCheckStr = pathToCheck.GetNativeAbsolutePathname();
+    if (FileAPI::FileStat(pathToCheckStr.c_str(), &s) == 0)
+    {
+        return (0 != (s.st_mode & S_IFDIR));
+    }
 #endif //#if defined (__DAVAENGINE_WIN32__)
 
 	return false;
@@ -503,14 +490,14 @@ bool FileSystem::IsDirectory(const FilePath & pathToCheck)
 HANDLE CreateFileWin(const String& path, bool shareRead = false)
 {
     int share = shareRead ? FILE_SHARE_READ : 0;
+    FilePath::NativeStringType pathWide = FilePath(path).GetNativeAbsolutePathname();
 
 #if defined (__DAVAENGINE_WIN32__)
 
-    HANDLE hFile = CreateFileA(path.c_str(), GENERIC_READ, share, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hFile = CreateFileW(pathWide.c_str(), GENERIC_READ, share, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 
 #elif defined(__DAVAENGINE_WIN_UAP__)
 
-    WideString pathWide = StringToWString(path);
     CREATEFILE2_EXTENDED_PARAMETERS params = { sizeof(CREATEFILE2_EXTENDED_PARAMETERS) };
     params.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
     params.dwFileFlags = 0;
@@ -649,21 +636,20 @@ const FilePath FileSystem::GetUserDocumentsPath()
 {
 #if defined(__DAVAENGINE_WIN32__)
 
-    char szPath[MAX_PATH + 1];
-    SHGetFolderPathA(NULL, CSIDL_PERSONAL, NULL, SHGFP_TYPE_CURRENT, szPath);
-    int32 n = strlen(szPath);
-    szPath[n] = '\\';
+    wchar_t szPath[MAX_PATH + 1];
+    SHGetFolderPathW(nullptr, CSIDL_PERSONAL, NULL, SHGFP_TYPE_CURRENT, szPath);
+    size_t n = wcslen(szPath);
+    szPath[n] = L'\\';
     szPath[n+1] = 0;
-    String str(szPath);
 
-    return FilePath(str).MakeDirectoryPathname();
+    return FilePath::FromNativeString(szPath).MakeDirectoryPathname();
 
 #elif defined(__DAVAENGINE_WIN_UAP__)
 
-    //take roaming folder as user documents folder
+    //take local folder as user documents folder
     using namespace Windows::Storage;
-    WideString roamingFolder = ApplicationData::Current->RoamingFolder->Path->Data();
-    return FilePath(WStringToString(roamingFolder)).MakeDirectoryPathname();
+    WideString roamingFolder = ApplicationData::Current->LocalFolder->Path->Data();
+    return FilePath::FromNativeString(roamingFolder).MakeDirectoryPathname();
 
 #endif
 }
@@ -672,21 +658,27 @@ const FilePath FileSystem::GetPublicDocumentsPath()
 {
 #if defined(__DAVAENGINE_WIN32__)
 
-    char szPath[MAX_PATH + 1];
-    SHGetFolderPathA(NULL, CSIDL_COMMON_DOCUMENTS, NULL, SHGFP_TYPE_CURRENT, szPath);
-    int32 n = strlen(szPath);
-    szPath[n] = '\\';
+    wchar_t szPath[MAX_PATH + 1] = {};
+    SHGetFolderPathW(NULL, CSIDL_COMMON_DOCUMENTS, NULL, SHGFP_TYPE_CURRENT, szPath);
+    size_t n = wcslen(szPath);
+    szPath[n] = L'\\';
     szPath[n+1] = 0;
-    String str(szPath);
 
-    return FilePath(str).MakeDirectoryPathname();
+    return FilePath::FromNativeString(szPath).MakeDirectoryPathname();
 
 #elif defined(__DAVAENGINE_WIN_UAP__)
 
-    //take roaming folder as user documents folder
-    using namespace Windows::Storage;
-    WideString localFolder = ApplicationData::Current->LocalFolder->Path->Data();
-    return FilePath(WStringToString(localFolder)).MakeDirectoryPathname();
+    //take the first removable storage as public documents folder
+    auto storageList = DeviceInfo::GetStoragesList();
+    for (const auto& x : storageList)
+    {
+        if (x.type == DeviceInfo::STORAGE_TYPE_PRIMARY_EXTERNAL || 
+            x.type == DeviceInfo::STORAGE_TYPE_SECONDARY_EXTERNAL)
+        {
+            return x.path;
+        }
+    }
+    return FilePath();
 
 #endif
 }
@@ -709,26 +701,26 @@ const FilePath FileSystem::GetPublicDocumentsPath()
     
 String FileSystem::ReadFileContents(const FilePath & pathname)
 {
-    File * fp = File::Create(pathname, File::OPEN|File::READ);
+	String fileContents;
+    RefPtr<File> fp(File::Create(pathname, File::OPEN|File::READ));
 	if (!fp)
 	{
 		Logger::Error("Failed to open file: %s", pathname.GetAbsolutePathname().c_str());
-		return 0;
-	}
-	uint32 fileSize = fp->GetSize();
-
-    String fileContents;
-    uint32 dataRead = fp->ReadString(fileContents);
-    
-	if (dataRead != fileSize)
+	} else
 	{
-		Logger::Error("Failed to read data from file: %s", pathname.GetAbsolutePathname().c_str());
-		return 0;
+		uint32 fileSize = fp->GetSize();
+
+		fileContents.resize(fileSize);
+
+		uint32 dataRead = fp->Read(&fileContents[0], fileSize);
+
+		if (dataRead != fileSize)
+		{
+			Logger::Error("Failed to read data from file: %s", pathname.GetAbsolutePathname().c_str());
+			fileContents.clear();
+		}
 	}
-    
-	SafeRelease(fp);
     return fileContents;
-    
 }
 
 
@@ -858,7 +850,7 @@ bool FileSystem::CompareTextFiles(const FilePath& filePath1, const FilePath& fil
 
     if (nullptr == static_cast<File *>(f1) || nullptr == static_cast<File *>(f2))
     {
-        Logger::Error("Couldn't copmare file %s and file %s, can't open", filePath1.GetAbsolutePathname().c_str(), filePath2.GetAbsolutePathname().c_str());
+        Logger::Error("Couldn't compare file %s and file %s, can't open", filePath1.GetAbsolutePathname().c_str(), filePath2.GetAbsolutePathname().c_str());
         return false;
     }
 
@@ -921,7 +913,7 @@ bool FileSystem::CompareBinaryFiles(const FilePath &filePath1, const FilePath &f
 
     if (nullptr == static_cast<File *>(f1) || nullptr == static_cast<File *>(f2))
     {
-        Logger::Error("Couldn't copmare file %s and file %s, can't open", filePath1.GetAbsolutePathname().c_str(), filePath2.GetAbsolutePathname().c_str());
+        Logger::Error("Couldn't compare file %s and file %s, can't open", filePath1.GetAbsolutePathname().c_str(), filePath2.GetAbsolutePathname().c_str());
         return false;
     }
 
@@ -960,4 +952,31 @@ bool FileSystem::CompareBinaryFiles(const FilePath &filePath1, const FilePath &f
     return res;
 }
 
+bool FileSystem::GetFileSize(const FilePath& path, uint32& size)
+{
+    ScopedPtr<File> file(File::Create(path, File::OPEN | File::READ));
+    if (file)
+    {
+        size = file->GetSize();
+        return true;
+    }
+
+    return false;
+}
+
+bool FileSystem::Exists(const FilePath& filePath) const
+{
+    const FilePath::ePathType pathType = filePath.GetType();
+    if (pathType == FilePath::PATH_IN_MEMORY || pathType == FilePath::PATH_EMPTY)
+    {
+        return false;
+    }
+
+    if (filePath.IsDirectoryPathname())
+    {
+        return IsDirectory(filePath);
+    }
+
+    return IsFile(filePath);
+}
 }

@@ -35,7 +35,6 @@
 
 #include "Render/Image/LibPngHelper.h"
 
-#include "Render/RenderManager.h"
 #include "Render/2D/Sprite.h"
 #include "Render/Texture.h"
 #include "FileSystem/FileSystem.h"
@@ -100,7 +99,7 @@ LibPngHelper::LibPngHelper()
     supportedFormats = { {FORMAT_RGBA8888, FORMAT_A8, FORMAT_A16} };
 }
 
-bool LibPngHelper::IsMyImage(File *infile) const
+bool LibPngHelper::CanProcessFile(File* infile) const
 {
     if (nullptr == infile)
     {

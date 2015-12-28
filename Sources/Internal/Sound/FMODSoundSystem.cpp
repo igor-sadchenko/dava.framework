@@ -82,6 +82,8 @@ void F_CALLBACK fmod_tracking_free(void* ptr, FMOD_MEMORY_TYPE /*type*/, const c
 
 }   // unnamed namespace
 
+static_assert(sizeof(FMOD_VECTOR) == sizeof(Vector3), "Sizes of FMOD_VECTOR and Vector3 are mismatch");
+
 static const FastName SEREALIZE_EVENTTYPE_EVENTFILE("eventFromFile");
 static const FastName SEREALIZE_EVENTTYPE_EVENTSYSTEM("eventFromSystem");
 
@@ -89,7 +91,7 @@ Mutex SoundSystem::soundGroupsMutex;
     
 SoundSystem::SoundSystem()
 {
-    DVASSERT(sizeof(FMOD_VECTOR) == sizeof(Vector3));
+    SetDebugMode(false);
 
 #if defined(DAVA_MEMORY_PROFILING_ENABLE)
     FMOD::Memory_Initialize(nullptr, 0, &fmod_tracking_alloc, &fmod_tracking_realloc, &fmod_tracking_free);
@@ -116,7 +118,9 @@ SoundSystem::SoundSystem()
 #ifdef DAVA_FMOD_PROFILE
     initFlags |= FMOD_INIT_ENABLE_PROFILE;
 #endif
+
     FMOD_RESULT initResult = fmodEventSystem->init(MAX_SOUND_VIRTUAL_CHANNELS, initFlags, extraDriverData);
+
     if (initResult != FMOD_OK)
     {
         Logger::Error("Failed to initialize FMOD: %s", FMOD_ErrorString(initResult));
@@ -158,6 +162,18 @@ void SoundSystem::InitFromQualitySettings()
     {
         Logger::Warning("[SoundSystem] No default quality SFX config!");
     }
+}
+
+void SoundSystem::SetDebugMode(bool debug)
+{
+    FMOD::Debug_SetLevel(debug ? FMOD_DEBUG_LEVEL_ALL : FMOD_DEBUG_LEVEL_NONE);
+}
+
+bool SoundSystem::IsDebugModeOn() const
+{
+    FMOD_DEBUGLEVEL debugLevel = 0;
+    FMOD::Debug_GetLevel(&debugLevel);
+    return debugLevel != FMOD_DEBUG_LEVEL_NONE;
 }
 
 SoundEvent * SoundSystem::CreateSoundEventByID(const FastName & eventName, const FastName & groupName)
@@ -397,7 +413,7 @@ void SoundSystem::Update(float32 timeElapsed)
 
     if (fmodEventSystem)
     {
-        fmodEventSystem->update();
+        FMOD_VERIFY(fmodEventSystem->update());
     }
     
 	uint32 size = static_cast<uint32>(soundsToReleaseOnUpdate.size());
@@ -477,6 +493,18 @@ void SoundSystem::SetCurrentLocale(const String & langID)
     {
         FMOD_VERIFY(fmodEventSystem->setLanguage(langID.c_str()));
     }
+}
+
+String SoundSystem::GetCurrentLocale() const
+{
+    if (fmodEventSystem)
+    {
+        char lang[256] = {};
+        FMOD_VERIFY(fmodEventSystem->getLanguage(lang));
+        return String(lang);
+    }
+
+    return String();
 }
 
 void SoundSystem::SetListenerPosition(const Vector3 & position)

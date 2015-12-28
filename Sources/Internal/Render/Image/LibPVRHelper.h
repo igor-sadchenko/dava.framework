@@ -31,7 +31,6 @@
 #define __DAVAENGINE_LIBPVRHELPER_H__
 
 #include "Base/Platform.h"
-#ifndef __DAVAENGINE_WIN_UAP__
 
 #include "Base/BaseTypes.h"
 #include "Base/BaseObject.h"
@@ -53,7 +52,12 @@
 //    #include "libpvr/PVRTError.h"
 //    #include "libpvr/PVRTDecompress.h"
 //    #include "libpvr/PVRTMap.h"
+#if defined (__DAVAENGINE_WIN_UAP__)
+#include "libpvr/PVRTextureDefines.h"
+#else
 #include "libpvr/PVRTextureHeader.h"
+#endif
+
 //    #include "libpvr/PVRTexture.h"
 #endif //#if defined (__DAVAENGINE_IPHONE__) || defined (__DAVAENGINE_ANDROID__)
 
@@ -145,7 +149,7 @@ public:
 
     ImageFormat GetImageFormat() const override;
 
-    bool IsMyImage(File *file) const override;
+    bool CanProcessFile(File* file) const override;
 
     eErrorCode ReadFile(File *infile, Vector<Image *> &imageSet, int32 fromMipmap = 0) const override;
 
@@ -205,26 +209,7 @@ inline ImageFormat LibPVRHelper::GetImageFormat() const
     return IMAGE_FORMAT_PVR;
 }
 
-inline LibPVRHelper* CreateLibPVRHelper()
-{
-    return new LibPVRHelper;
-}
 
 };
-
-#else
-
-#include "Render/Image/ImageFormatInterface.h"
-
-namespace DAVA
-{
-    inline ImageFormatInterface* CreateLibPVRHelper()
-    {
-        return nullptr;
-    }
-}
-
-#endif //  #ifndef __DAVAENGINE_WIN_UAP__
-
 
 #endif //#ifndef __DAVAENGINE_LIBPVRHELPER_H__

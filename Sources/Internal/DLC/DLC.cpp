@@ -47,13 +47,13 @@ DLC::DLC(const String &url, const FilePath &sourceDir, const FilePath &destinati
 , patchingThread(NULL)
 {
     DVASSERT(workingDir.IsDirectoryPathname());
-    DVASSERT(workingDir.Exists());
+    DVASSERT(FileSystem::Instance()->Exists(workingDir));
 
     DVASSERT(destinationDir.IsDirectoryPathname());
-    DVASSERT(destinationDir.Exists());
+    DVASSERT(FileSystem::Instance()->Exists(destinationDir));
 
     DVASSERT(sourceDir.IsDirectoryPathname());
-    DVASSERT(sourceDir.Exists());
+    DVASSERT(FileSystem::Instance()->Exists(sourceDir));
 
     DVASSERT(!gameVersion.empty());
 
@@ -170,7 +170,7 @@ FilePath DLC::GetMetaStorePath() const
     
 void DLC::PostEvent(DLCEvent event)
 {
-    Function<void()> fn = Bind(MakeFunction(this, &DLC::FSM), event);
+    Function<void()> fn = Bind(&DLC::FSM, this, event);
 	JobManager::Instance()->CreateMainJob(fn);
 }
 
@@ -199,10 +199,10 @@ void DLC::FSM(DLCEvent event)
 
                 case EVENT_CHECK_START:
                     // if last time stopped on the patching state and patch file exists - continue patching
-                    if( !dlcContext.forceFullUpdate &&
+                    if (!dlcContext.forceFullUpdate &&
                         DS_PATCHING == dlcContext.prevState &&
-                        dlcContext.remotePatchStorePath.Exists() &&
-                        dlcContext.remoteVerStotePath.Exists())
+                        FileSystem::Instance()->Exists(dlcContext.remotePatchStorePath) &&
+                        FileSystem::Instance()->Exists(dlcContext.remoteVerStotePath))
                     {
                         dlcContext.prevState = 0;
                         dlcState = DS_PATCHING;
@@ -489,7 +489,7 @@ void DLC::StepCheckInfoFinish(const uint32 &id, const DownloadStatus &status)
             DownloadError downloadError;
             DownloadManager::Instance()->GetError(id, downloadError);
 
-            if(DLE_NO_ERROR == downloadError && dlcContext.remoteVerStotePath.Exists())
+            if (DLE_NO_ERROR == downloadError && FileSystem::Instance()->Exists(dlcContext.remoteVerStotePath))
             {
                 if(ReadUint32(dlcContext.remoteVerStotePath, dlcContext.remoteVer))
                 {
@@ -711,16 +711,19 @@ void DLC::StepDownloadPatchBegin()
         SafeRelease(downloadInfoFile);
     }
 
-    // save URL that we gonna download
-    downloadInfoFile = File::Create(dlcContext.downloadInfoStorePath, File::CREATE | File::WRITE);
-    if(NULL != downloadInfoFile)
+    if (donwloadType != RESUMED)//if 'RESUMED' downloadInfoFile contains correct info and we don't want to recreate it to prevent issues when disk is full
     {
-        String sizeStr = Format("%u", dlcContext.remotePatchSize);
-        downloadInfoFile->WriteString(sizeStr);
-        downloadInfoFile->WriteString(dlcContext.remotePatchUrl);
-        SafeRelease(downloadInfoFile);
+        // save URL that we gonna download
+        downloadInfoFile = File::Create(dlcContext.downloadInfoStorePath, File::CREATE | File::WRITE);
+        if(NULL != downloadInfoFile)
+        {
+            String sizeStr = Format("%u", dlcContext.remotePatchSize);
+            downloadInfoFile->WriteString(sizeStr);
+            downloadInfoFile->WriteString(dlcContext.remotePatchUrl);
+            SafeRelease(downloadInfoFile);
+        }
     }
-
+    
     Logger::Info("DLC: Downloading patch-file\n\tfrom: %s\n\tto: %s", dlcContext.remotePatchUrl.c_str(), dlcContext.remotePatchStorePath.GetAbsolutePathname().c_str());
 
     // start download and notify about download status into StepDownloadPatchFinish

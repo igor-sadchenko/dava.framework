@@ -4,10 +4,10 @@ import android.os.Bundle;
 import android.view.Menu;
 
 import com.dava.framework.JNIActivity;
-import com.dava.framework.JNIGLSurfaceView;
+import com.dava.framework.JNISurfaceView;
 
 public class UnitTests extends JNIActivity {
-
+	
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
@@ -20,10 +20,17 @@ public class UnitTests extends JNIActivity {
 		return true;
 	}
 
-	public JNIGLSurfaceView GetSurfaceView() {
+	@Override
+	public JNISurfaceView FindSurfaceView() {
 		setContentView(R.layout.activity_main);
-		JNIGLSurfaceView view = (JNIGLSurfaceView) findViewById(R.id.view1);
+		JNISurfaceView view = (JNISurfaceView) findViewById(R.id.view1);
 		return view;
 	}
 
+	private native void nativeCall(int countC, boolean releaseRef);
+	public void TestCallToNativeInitiatedByJava(int countJava, int countC, boolean releaseRef) {
+		for (int i = 0; i < countJava; ++i) {
+			nativeCall(countC, releaseRef);
+		}
+	}
 }

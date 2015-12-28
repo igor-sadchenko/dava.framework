@@ -90,9 +90,9 @@ SceneTabWidget::SceneTabWidget(QWidget *parent)
 	QObject::connect(tabBar, SIGNAL(tabCloseRequested(int)), this, SLOT(TabBarCloseRequest(int)));
 	QObject::connect(tabBar, SIGNAL(OnDrop(const QMimeData *)), this, SLOT(TabBarDataDropped(const QMimeData *)));
 	QObject::connect(davaWidget, SIGNAL(OnDrop(const QMimeData *)), this, SLOT(DAVAWidgetDataDropped(const QMimeData *)));
-    QObject::connect(davaWidget, SIGNAL(Resized(int, int, int)), this, SLOT(OnDavaGLWidgetResized(int, int, int)));
+    QObject::connect(davaWidget, SIGNAL(Resized(int, int)), this, SLOT(OnDavaGLWidgetResized(int, int)));
 
-	QObject::connect(SceneSignals::Instance(), SIGNAL(MouseOverSelection(SceneEditor2*, const EntityGroup*)), this, SLOT(MouseOverSelectedEntities(SceneEditor2*, const EntityGroup*)));
+    QObject::connect(SceneSignals::Instance(), SIGNAL(MouseOverSelection(SceneEditor2*, const EntityGroup*)), this, SLOT(MouseOverSelectedEntities(SceneEditor2*, const EntityGroup*)));
 	QObject::connect(SceneSignals::Instance(), SIGNAL(Saved(SceneEditor2*)), this, SLOT(SceneSaved(SceneEditor2*)));
 	QObject::connect(SceneSignals::Instance(), SIGNAL(ModifyStatusChanged(SceneEditor2 *, bool)), this, SLOT(SceneModifyStatusChanged(SceneEditor2 *, bool)));
 
@@ -115,7 +115,7 @@ SceneTabWidget::SceneTabWidget(QWidget *parent)
 
         curScene->cameraSystem->MoveToStep( ofs );
     };
-    connect( davaWidget->GetGLWindow(), &OpenGLWindow::mouseScrolled, mouseWheelHandler );
+    connect(davaWidget, &DavaGLWidget::mouseScrolled, mouseWheelHandler);
 
     auto moveToSelectionHandler = [&]
     {
@@ -141,8 +141,6 @@ void SceneTabWidget::InitDAVAUI()
 
 	davaUIScreen = new DAVA::UIScreen();
 	davaUIScreen->AddControl(dava3DView);
-	davaUIScreen->GetBackground()->SetDrawType(UIControlBackground::DRAW_FILL);
-	davaUIScreen->GetBackground()->SetColor(DAVA::Color(0.3f, 0.3f, 0.3f, 1.0f));
 
 	UIScreenManager::Instance()->RegisterScreen(davaUIScreenID, davaUIScreen);
 	UIScreenManager::Instance()->SetScreen(davaUIScreenID);
@@ -198,8 +196,8 @@ void SceneTabWidget::OpenTabInternal(const DAVA::FilePath scenePathname, int tab
 {
     SceneEditor2 *scene = new SceneEditor2();
     scene->SetScenePath(scenePathname);
-    
-    if(scenePathname.Exists())
+
+    if (FileSystem::Instance()->Exists(scenePathname))
     {
         bool sceneWasLoaded = scene->Load(scenePathname);
         if(!sceneWasLoaded)
@@ -380,54 +378,35 @@ void SceneTabWidget::DAVAWidgetDataDropped(const QMimeData *data)
 {
 	if(NULL != curScene)
 	{
-        if(MimeDataHelper2<DAVA::NMaterial>::IsValid(data))
+        QList<QUrl> urls = data->urls();
+        for (int i = 0; i < urls.size(); ++i)
         {
-			QVector<DAVA::NMaterial*> materials = MimeDataHelper2<DAVA::NMaterial>::DecodeMimeData(data);
-
-			// assing only when single material is dropped
-			if(materials.size() == 1)
-			{
-				const EntityGroup* group = curScene->collisionSystem->ObjectsRayTestFromCamera();
-
-				if(NULL != group && group->Size() > 0)
-				{
-                    DAVA::Entity *targetEntity = curScene->selectionSystem->GetSelectableEntity(group->GetEntity(0));
-					MaterialAssignSystem::AssignMaterialToEntity(curScene, targetEntity, materials[0]);
-				}
-			}
-		}
-        else
-		{
-            QList<QUrl> urls = data->urls();
-            for(int i = 0; i < urls.size(); ++i)
+            QString path = urls[i].toLocalFile();
+            if (QFileInfo(path).suffix() == "sc2")
             {
-				QString path = urls[i].toLocalFile();
-				if(QFileInfo(path).suffix() == "sc2")
-                {
-                    DAVA::Vector3 pos;
-                    
-                    // check if there is intersection with landscape. ray from camera to mouse pointer
-                    // if there is - we should move opening scene to that point
-                    if(!curScene->collisionSystem->LandRayTestFromCamera(pos))
-                    {
-                        DAVA::Landscape *landscape = curScene->collisionSystem->GetLandscape();
-                        if( NULL != landscape && NULL != landscape->GetHeightmap() && landscape->GetHeightmap()->Size() > 0)
-                        {
-                            curScene->collisionSystem->GetLandscape()->PlacePoint(DAVA::Vector3(), pos);
-                        }
-                    }
+                DAVA::Vector3 pos;
 
-                    QtMainWindow::Instance()->WaitStart("Adding object to scene", path);
-                    if (TestSceneCompatibility(DAVA::FilePath(path.toStdString())))
+                // check if there is intersection with landscape. ray from camera to mouse pointer
+                // if there is - we should move opening scene to that point
+                if (!curScene->collisionSystem->LandRayTestFromCamera(pos))
+                {
+                    DAVA::Landscape* landscape = curScene->collisionSystem->GetLandscape();
+                    if (NULL != landscape && NULL != landscape->GetHeightmap() && landscape->GetHeightmap()->Size() > 0)
                     {
-                        curScene->structureSystem->Add(path.toStdString(), pos);
+                        curScene->collisionSystem->GetLandscape()->PlacePoint(DAVA::Vector3(), pos);
                     }
-                    QtMainWindow::Instance()->WaitStop();
                 }
+
+                QtMainWindow::Instance()->WaitStart("Adding object to scene", path);
+                if (TestSceneCompatibility(DAVA::FilePath(path.toStdString())))
+                {
+                    curScene->structureSystem->Add(path.toStdString(), pos);
+                }
+                QtMainWindow::Instance()->WaitStop();
             }
-		}
-	}
-	else
+        }
+    }
+    else
 	{
 		TabBarDataDropped(data);
 	}
@@ -439,31 +418,31 @@ void SceneTabWidget::MouseOverSelectedEntities(SceneEditor2* scene, const Entity
 	static QCursor cursorRotate(QPixmap(":/QtIcons/curcor_rotate.png"));
 	static QCursor cursorScale(QPixmap(":/QtIcons/curcor_scale.png"));
 
-    auto w = davaWidget->GetGLWindow();
+    auto view = davaWidget->GetGLView();
 
-	if(GetCurrentScene() == scene && nullptr != entities)
-	{
-		switch(scene->modifSystem->GetModifMode())
+    if (GetCurrentScene() == scene && nullptr != entities)
+    {
+        switch(scene->modifSystem->GetModifMode())
 		{
 		case ST_MODIF_MOVE:
-			w->setCursor(cursorMove);
-			break;
-		case ST_MODIF_ROTATE:
-            w->setCursor(cursorRotate);
-			break;
-		case ST_MODIF_SCALE:
-            w->setCursor(cursorScale);
-			break;
-		case ST_MODIF_OFF:
-		default:
-            w->setCursor(Qt::ArrowCursor);
-			break;
-		}
-	}
+            view->setCursor(cursorMove);
+            break;
+        case ST_MODIF_ROTATE:
+            view->setCursor(cursorRotate);
+            break;
+        case ST_MODIF_SCALE:
+            view->setCursor(cursorScale);
+            break;
+        case ST_MODIF_OFF:
+        default:
+            view->unsetCursor();
+            break;
+        }
+    }
 	else
 	{
-		w->setCursor(Qt::ArrowCursor);
-	}
+        view->unsetCursor();
+    }
 }
 
 void SceneTabWidget::SceneSaved(SceneEditor2 *scene)
@@ -495,13 +474,10 @@ void SceneTabWidget::SceneModifyStatusChanged(SceneEditor2 *scene, bool modified
 	}
 }
 
-void SceneTabWidget::OnDavaGLWidgetResized(int width, int height, int dpr)
+void SceneTabWidget::OnDavaGLWidgetResized(int width, int height)
 {
-    int scaledWidth = width * dpr;
-    int scaledHeight = height * dpr;
-    
-    davaUIScreen->SetSize(DAVA::Vector2(scaledWidth, scaledHeight));
-    dava3DView->SetSize(DAVA::Vector2(scaledWidth - 2 * dava3DViewMargin, scaledHeight - 2 * dava3DViewMargin));
+    davaUIScreen->SetSize(DAVA::Vector2(width, height));
+    dava3DView->SetSize(DAVA::Vector2(width - 2 * dava3DViewMargin, height - 2 * dava3DViewMargin));
 
     SceneEditor2* scene = GetTabScene(tabBar->currentIndex());
     if(NULL != scene)

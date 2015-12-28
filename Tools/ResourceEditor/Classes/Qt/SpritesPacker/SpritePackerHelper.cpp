@@ -28,7 +28,7 @@
 
 
 #include "SpritePackerHelper.h"
-#include "SpritesPacker.h"
+#include "SpriteResourcesPacker.h"
 #include "Qt/Settings/SettingsManager.h"
 #include "Project/ProjectManager.h"
 #include <QtConcurrentRun>
@@ -48,7 +48,7 @@ SpritePackerHelper::SpritePackerHelper()
 
 void SpritePackerHelper::UpdateParticleSprites(DAVA::eGPUFamily gpu)
 {
-	FilePath projectPath = ProjectManager::Instance()->CurProjectPath();
+    FilePath projectPath = ProjectManager::Instance()->GetProjectPath();
     if(projectPath.IsEmpty())
     {
         Logger::Warning("[ParticlesEditorSpritePackerHelper::UpdateParticleSprites] Project path not set.");
@@ -63,102 +63,36 @@ void SpritePackerHelper::UpdateParticleSprites(DAVA::eGPUFamily gpu)
 void SpritePackerHelper::Pack(DAVA::eGPUFamily gpu)
 {
 	void *pool = DAVA::QtLayer::Instance()->CreateAutoreleasePool();
-	FilePath projectPath = ProjectManager::Instance()->CurProjectPath();
-	FilePath inputDir = projectPath + "DataSource/Gfx/Particles/";
-	FilePath outputDir = projectPath + "Data/Gfx/Particles/";
+    FilePath projectPath = ProjectManager::Instance()->GetProjectPath();
+    FilePath inputDir = projectPath + "DataSource/Gfx/Particles/";
+    FilePath outputDir = projectPath + "Data/Gfx/Particles/";
 
-	if(!FileSystem::Instance()->IsDirectory(inputDir))
-	{
-		Logger::Error("[SpritePackerHelper::Pack] inputDir is not directory (%s)", inputDir.GetAbsolutePathname().c_str());
+    if (!FileSystem::Instance()->IsDirectory(inputDir))
+    {
+        Logger::Error("[SpritePackerHelper::Pack] inputDir is not directory (%s)", inputDir.GetAbsolutePathname().c_str());
         DAVA::QtLayer::Instance()->ReleaseAutoreleasePool(pool);
 		return;
 	}
 
-	ResourcePacker2D * resourcePacker = new ResourcePacker2D();
-	
-	bool isChanged = resourcePacker->IsMD5ChangedDir(projectPath+"DataSource/Gfx/",inputDir,"particles.md5",true);
-	
-	SafeDelete(resourcePacker);
-	if(!isChanged)
-	{
-        DAVA::QtLayer::Instance()->ReleaseAutoreleasePool(pool);
-		return;
-	}
-	
-	SpritesPacker packer;
-	packer.SetInputDir(inputDir);
-	packer.SetOutputDir(outputDir);
-	packer.PackTextures(gpu);
-	DAVA::QtLayer::Instance()->ReleaseAutoreleasePool(pool);
+    ResourcePacker2D resourcePacker;
+
+    bool isSrcChanged = resourcePacker.RecalculateDirMD5(inputDir, projectPath + "DataSource/Gfx/particles.md5", true);
+    if (isSrcChanged)
+    {
+        SpriteResourcesPacker packer;
+        packer.SetInputDir(inputDir);
+        packer.SetOutputDir(outputDir);
+        packer.PackTextures(gpu);
+    }
+
+    DAVA::QtLayer::Instance()->ReleaseAutoreleasePool(pool);
 }
 
 void SpritePackerHelper::Reload()
 {
-    // All the Particle Effects must be re-started after sprites are reloaded to avoid
-    // issue like DF-545.
-    const SceneTabWidget *widget = QtMainWindow::Instance()->GetSceneWidget();
-    
-    particleEffectsState.clear();
-    for(int tab = 0; tab < widget->GetTabCount(); ++tab)
-	{
-		Scene *scene = widget->GetTabScene(tab);
-        StopParticleEffects(scene);
-	}
-
     Sprite::ReloadSprites();
-    RestartParticleEffects();
+    QtMainWindow::Instance()->RestartParticleEffects();
 }
-
-void SpritePackerHelper::StopParticleEffects(Scene * scene)
-{
-    List<Entity*> particleEffects;
-    FindAllParticleEffectsRecursive(scene, particleEffects);
-
-	for (auto it = particleEffects.begin(); it != particleEffects.end(); ++it)
-	{
-		Entity* curNode = (*it);
-	    ParticleEffectComponent * effectComponent = cast_if_equal<ParticleEffectComponent*>(curNode->GetComponent(Component::PARTICLE_EFFECT_COMPONENT));
-		
-		if (!effectComponent)
-		{
-			continue;
-		}
-        
-        bool isPlaying = !effectComponent->IsStopped();
-        particleEffectsState[effectComponent] = isPlaying;
-		if (isPlaying)
-		{
-			effectComponent->Stop();
-		}
-    }
-}
-
-void SpritePackerHelper::RestartParticleEffects()
-{
-    for (Map<ParticleEffectComponent*, bool>::const_iterator iter = particleEffectsState.begin(); iter != particleEffectsState.end(); iter ++)
-    {
-        if (iter->second)
-        {
-            iter->first->Start();
-        }
-    }
-}
-
-void SpritePackerHelper::FindAllParticleEffectsRecursive(Entity *entity , List<DAVA::Entity*> & particleEffects)
-{
-    ParticleEffectComponent * effectComponent = cast_if_equal<ParticleEffectComponent*>(entity->GetComponent(Component::PARTICLE_EFFECT_COMPONENT));
-	if (effectComponent)
-	{
-		particleEffects.push_back(entity);
-	}
-    
-	uint32 childCount = entity->GetChildrenCount();
-	for(uint32 i = 0 ; i < childCount; ++i)
-	{
-		FindAllParticleEffectsRecursive(entity->GetChild(i), particleEffects);
-	}
-}
-
 
 void SpritePackerHelper::EnumerateSpritesForParticleEmitter(ParticleEmitter* emitter, Map<String, Sprite *> &sprites)
 {

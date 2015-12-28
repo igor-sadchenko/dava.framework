@@ -40,7 +40,6 @@
 
 #include "Autotesting/AutotestingSystemLua.h"
 
-#include "Render/RenderManager.h"
 #include "Platform/DateTime.h"
 
 
@@ -78,10 +77,10 @@ public:
 	void SetUpConnectionToDB();
 	RefPtr<KeyedArchive> GetIdYamlOptions();
 
-	void InitializeDevice(const String & device);
+    void InitializeDevice();
 
-	// Test organization
-	void OnTestStart(const String &testName);
+    // Test organization
+    void OnTestStart(const String &testName);
 	void OnStepStart( const String & stepName );
 	void OnStepFinished();
 	void OnTestStarted();
@@ -109,6 +108,8 @@ public:
 	String GetCurrentTimeMsString();
 
 	inline AutotestingSystemLua* GetLuaSystem() { return luaSystem; };
+    
+    static String ResolvePathToAutomation(const String &automationPath);
 protected:
 
 	void OnScreenShotInternal(Image *image);
@@ -126,7 +127,6 @@ public:
     
     String projectName;
     String groupName;
-	String deviceId;
 	String deviceName;
     String testsDate;
 	String runId;

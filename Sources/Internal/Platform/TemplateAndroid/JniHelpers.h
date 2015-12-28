@@ -35,8 +35,7 @@
 #include <jni.h>
 #include "Platform/TemplateAndroid/ExternC/AndroidLayer.h"
 #include "Debug/DVAssert.h"
-#include "Base/Function.h"
-#include "Base/Bind.h"
+#include "Functional/Function.h"
 #include "Math/Rect.h"
 
 #define DAVA_JNI_EXCEPTION_CHECK \
@@ -58,6 +57,9 @@
         DVASSERT_MSG(false, error.c_str());\
     }\
 }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wclass-varargs"
 
 // placed into the Global namespace and not in JNI to use it like a jstring
 class jstringArray
@@ -99,29 +101,11 @@ void DetachCurrentThreadFromJVM();
 
 Rect V2P(const Rect& rect);
 
-bool CreateStringFromJni(JNIEnv *env, jstring jniString, char *generalString);
-inline bool CreateStringFromJni(jstring jniString, char *generalString)
-{
-    return CreateStringFromJni(GetEnv(), jniString, generalString);
-}
+String ToString(const jstring jniString);
 
-void CreateStringFromJni(JNIEnv *env, jstring jniString, String& string);
-inline void CreateStringFromJni(jstring jniString, String& string)
-{
-    CreateStringFromJni(GetEnv(), jniString, string);
-}
+WideString ToWideString(const jstring jniString);
 
-void CreateWStringFromJni(JNIEnv *env, jstring jniString, WideString& string);
-inline void CreateWStringFromJni(jstring jniString, WideString& string)
-{
-    CreateWStringFromJni(GetEnv(), jniString, string);
-}
-
-jstring CreateJString(JNIEnv *env, const DAVA::WideString& string);
-inline jstring CreateJString(const DAVA::WideString& string)
-{
-    return CreateJString(GetEnv(), string);
-}
+jstring ToJNIString(const DAVA::WideString& string);
 
 #define DeclareTypeString(str)\
 	operator const char *() const {return value.c_str();}\
@@ -825,6 +809,8 @@ Function<Ret(P1, P2, P3, P4, P5, P6)> JavaClass::GetStaticMethod(String name) co
 
 } // end namespace JNI
 } // end namespace DAVA
+
+#pragma clang diagnostic pop
 
 #endif
 

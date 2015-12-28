@@ -33,8 +33,9 @@
 #include "Tools/SelectPathWidget/SelectEntityPathWidget.h"
 #include "Main/mainwindow.h"
 #include "Qt/Settings/SettingsManager.h"
-#include "Classes/Commands2/EntityAddCommand.h"
 #include "Qt/Main/QtUtils.h"
+#include "QtTools/ConsoleWidget/PointerSerializer.h"
+#include "Classes/Commands2/EntityAddCommand.h"
 #include "Commands2/EntityRemoveCommand.h"
 #include "SwitchEntityCreator.h"
 #include "Project/ProjectManager.h"
@@ -46,20 +47,20 @@ AddSwitchEntityDialog::AddSwitchEntityDialog( QWidget* parent)
 {
 	setAcceptDrops(true);
 	setAttribute( Qt::WA_DeleteOnClose, true );
-	FilePath defaultPath(ProjectManager::Instance()->CurProjectDataSourcePath());
-	
-	SceneEditor2 *scene = QtMainWindow::Instance()->GetCurrentScene();
-	if(scene)
-	{
-		FilePath scenePath = scene->GetScenePath();
-		if(scenePath.Exists())
-		{
-			defaultPath = scenePath.GetDirectory();
-		}
-	}
-	
-	SelectEntityPathWidget* firstWidget = new SelectEntityPathWidget(parent, defaultPath.GetAbsolutePathname(),"");
-	SelectEntityPathWidget* secondWidget = new SelectEntityPathWidget(parent, defaultPath.GetAbsolutePathname(),"");
+    FilePath defaultPath(ProjectManager::Instance()->GetDataSourcePath());
+
+    SceneEditor2* scene = QtMainWindow::Instance()->GetCurrentScene();
+    if (scene)
+    {
+        FilePath scenePath = scene->GetScenePath();
+        if (scenePath.Exists())
+        {
+            defaultPath = scenePath.GetDirectory();
+        }
+    }
+
+    SelectEntityPathWidget* firstWidget = new SelectEntityPathWidget(parent, defaultPath.GetAbsolutePathname(), "");
+    SelectEntityPathWidget* secondWidget = new SelectEntityPathWidget(parent, defaultPath.GetAbsolutePathname(),"");
 	SelectEntityPathWidget* thirdWidget = new SelectEntityPathWidget(parent, defaultPath.GetAbsolutePathname(),"");
 
 	AddControlToUserContainer(firstWidget, "First Entity:");
@@ -134,14 +135,16 @@ void AddSwitchEntityDialog::accept()
 		if(creator.HasSwitchComponentsRecursive(vector[i]))
 		{
 			canCreateSwitch = false;
-			Logger::Error("Can't create switch in switch: %s", vector[i]->GetName().c_str());
+			Logger::Error("Can't create switch in switch: %s%s", vector[i]->GetName().c_str(),
+				PointerSerializer::FromPointer(vector[i]).c_str());
             ShowErrorDialog(ResourceEditor::ADD_SWITCH_NODE_DIALOG_DENY_SRC_SWITCH);
 			return;
 		}
         if(!creator.HasRenderObjectsRecursive(vector[i]))
         {
             canCreateSwitch = false;
-            Logger::Error("Entity '%s' hasn't mesh render objects", vector[i]->GetName().c_str());
+            Logger::Error("Entity '%s' hasn't mesh render objects%s", vector[i]->GetName().c_str(),
+				PointerSerializer::FromPointer(vector[i]).c_str());
             ShowErrorDialog(ResourceEditor::ADD_SWITCH_NODE_DIALOG_NO_RENDER_OBJECTS);
             return;
         }

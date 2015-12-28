@@ -113,8 +113,14 @@ public class JNIWebView {
         @Override
         public boolean onKeyPreIme(int keyCode, KeyEvent event) {
             if (keyCode == KeyEvent.KEYCODE_BACK) {
-                clearFocus();
-                return false;
+            	if (event.getAction() == KeyEvent.ACTION_DOWN)
+            	{
+            		// skip down event
+            	} else
+            	{
+            		clearFocus();
+            	}
+                return true;
             }
             return super.onKeyPreIme(keyCode, event);
         }
@@ -221,7 +227,7 @@ public class JNIWebView {
     }
 
     public static void OpenURL(final int id, final String url) {
-        final JNIActivity activity = JNIActivity.GetActivity();
+    	final JNIActivity activity = JNIActivity.GetActivity();
         if (null == activity || activity.GetIsPausing())
             return;
 
@@ -441,6 +447,25 @@ public class JNIWebView {
             }
         });
     }
+    
+    public static void WillDraw(final int id) {
+        final JNIActivity activity = JNIActivity.GetActivity();
+        if (null == activity || activity.GetIsPausing())
+            return;
+
+        activity.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (!views.containsKey(id)) {
+                    Log.e(TAG, String.format("Unknown view id %d", id));
+                    return;
+                }
+                WebViewWrapper view = views.get(id);
+                InternalViewClientV14 client = view.getInternalViewClient();
+                client.updateVisible(view);
+            }
+        });
+    }
 
     public static void setRenderToTexture(final int id,
             final boolean renderToTexture) {
@@ -519,8 +544,7 @@ public class JNIWebView {
                 }
             }
 
-            JNIActivity.GetActivity()
-                    .PostEventToGL(new jsCallback(id, message));
+            JNIActivity.GetActivity().RunOnMainLoopThread(new jsCallback(id, message));
             result.confirm();
             return true;
         }

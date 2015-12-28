@@ -49,14 +49,13 @@ class SpinnerAdapter : public BaseObject
 {
 
 public:
-    
     enum eItemOrder
     {
-        PREVIOUS = -1,
-        CURRENT = 0,
-        NEXT = 1
+        EIO_PREVIOUS = -1,
+        EIO_CURRENT = 0,
+        EIO_NEXT = 1
     };
-    
+
     class SelectionObserver
     {
     public:
@@ -141,8 +140,6 @@ public:
     void LoadFromYamlNode(const YamlNode * node, UIYamlLoader * loader) override;
     void LoadFromYamlNodeCompleted() override;
     YamlNode * SaveToYamlNode(UIYamlLoader * loader) override;
-
-    List<UIControl* > GetSubcontrols() override;
 
     SpinnerAdapter * GetAdater() const { return adapter; }
     void SetAdapter(SpinnerAdapter * adapter);

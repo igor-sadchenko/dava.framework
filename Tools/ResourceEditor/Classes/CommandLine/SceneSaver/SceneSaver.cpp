@@ -26,22 +26,21 @@
     SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 =====================================================================================*/
 
-
-#include "SceneSaver.h"
+#include "CommandLine/SceneSaver/SceneSaver.h"
 #include "Deprecated/SceneValidator.h"
 
-#include "Qt/Scene/SceneHelper.h"
+#include "Scene/SceneHelper.h"
+#include "Project/ProjectManager.h"
 
-#include "Classes/StringConstants.h"
-#include "Classes/Qt/Main/QtUtils.h"
+#include "StringConstants.h"
+#include "Main/QtUtils.h"
 
+#include "FileSystem/FileList.h"
 #include "Scene3D/Components/CustomPropertiesComponent.h"
-#include "CommandLine/CommandLineTool.h"
 
 using namespace DAVA;
 
 SceneSaver::SceneSaver()
-    : copyConverted(false)
 {
 }
 
@@ -84,6 +83,7 @@ void SceneSaver::SaveFile(const String &fileName, Set<String> &errorLog)
 	}
 
     SafeRelease(scene);
+    RenderObjectsFlusher::Flush();
 }
 
 void SceneSaver::ResaveFile(const String &fileName, Set<String> &errorLog)
@@ -97,13 +97,14 @@ void SceneSaver::ResaveFile(const String &fileName, Set<String> &errorLog)
     if(SceneFileV2::ERROR_NO_ERROR == scene->LoadScene(sc2Filename))
     {
         scene->SaveScene(sc2Filename, false);
-	}
-	else
+    }
+    else
 	{
 		errorLog.insert(Format("[SceneSaver::ResaveFile] Can't open file %s", fileName.c_str()));
 	}
 
 	SafeRelease(scene);
+    RenderObjectsFlusher::Flush();
 }
 
 void SceneSaver::SaveScene(Scene *scene, const FilePath &fileName, Set<String> &errorLog)
@@ -123,7 +124,7 @@ void SceneSaver::SaveScene(Scene *scene, const FilePath &fileName, Set<String> &
     SceneValidator::Instance()->ValidateScene(scene, fileName, errorLog);
 
     texturesForSave.clear();
-    SceneHelper::EnumerateSceneTextures(scene, texturesForSave, SceneHelper::INCLUDE_NULL);
+    SceneHelper::EnumerateSceneTextures(scene, texturesForSave, SceneHelper::TexturesEnumerateMode::INCLUDE_NULL);
 
     CopyTextures(scene);
 	ReleaseTextures();
@@ -137,12 +138,6 @@ void SceneSaver::SaveScene(Scene *scene, const FilePath &fileName, Set<String> &
     VegetationRenderObject* vegetation = FindVegetation(scene);
     if(vegetation)
     {
-        const FilePath& textureSheetPath = vegetation->GetTextureSheetPath();
-        if(!textureSheetPath.IsEmpty())
-        {
-            sceneUtils.AddFile(vegetation->GetTextureSheetPath());
-        }
-        
         const FilePath vegetationCustomGeometry = vegetation->GetCustomGeometryPath();
         if(!vegetationCustomGeometry.IsEmpty())
         {
@@ -274,8 +269,8 @@ void SceneSaver::CopyEffects(Entity *node)
     for (auto it = effectFolders.begin(), endIt = effectFolders.end(); it != endIt; ++it)
     {
         FilePath flagsTXT = *it + "flags.txt";
-        
-        if(flagsTXT.Exists())
+
+        if (FileSystem::Instance()->Exists(flagsTXT))
         {
             sceneUtils.AddFile(flagsTXT);
         }
@@ -313,7 +308,6 @@ void SceneSaver::CopyEmitter( ParticleEmitter *emitter)
 			psdPath.ReplaceExtension(".psd");
 			sceneUtils.AddFile(psdPath);
             
-            
             effectFolders.insert(psdPath.GetDirectory());
 		}
 	}
@@ -330,7 +324,7 @@ void SceneSaver::CopyCustomColorTexture(Scene *scene, const FilePath & sceneFold
 	String pathname = customProps->GetString(ResourceEditor::CUSTOM_COLOR_TEXTURE_PROP);
 	if(pathname.empty()) return;
 
-    FilePath projectPath = CommandLineTool::CreateProjectPathFromPath(sceneFolder);
+    FilePath projectPath = ProjectManager::CreateProjectPathFromPath(sceneFolder);
     if(projectPath.IsEmpty())
     {
         errorLog.insert(Format("Can't copy custom colors texture (%s)", pathname.c_str()));
@@ -341,7 +335,7 @@ void SceneSaver::CopyCustomColorTexture(Scene *scene, const FilePath & sceneFold
     sceneUtils.AddFile(texPathname);
     
     FilePath newTexPathname = sceneUtils.GetNewFilePath(texPathname);
-    FilePath newProjectPathname = CommandLineTool::CreateProjectPathFromPath(sceneUtils.dataFolder);
+    FilePath newProjectPathname = ProjectManager::CreateProjectPathFromPath(sceneUtils.dataFolder);
     if(newProjectPathname.IsEmpty())
     {
         errorLog.insert(Format("Can't save custom colors texture (%s)", pathname.c_str()));
@@ -350,4 +344,30 @@ void SceneSaver::CopyCustomColorTexture(Scene *scene, const FilePath & sceneFold
     
     //save new path to custom colors texture
     customProps->SetString(ResourceEditor::CUSTOM_COLOR_TEXTURE_PROP, newTexPathname.GetRelativePathname(newProjectPathname));
+}
+
+void SceneSaver::ResaveYamlFilesRecursive(const FilePath & folder, Set<String> &errorLog) const
+{
+    ScopedPtr<FileList> fileList(new FileList(folder));
+    for (int32 i = 0; i < fileList->GetCount(); ++i)
+    {
+        const FilePath & pathname = fileList->GetPathname(i);
+        if (fileList->IsDirectory(i))
+        {
+            if (!fileList->IsNavigationDirectory(i))
+            {
+                ResaveYamlFilesRecursive(pathname, errorLog);
+            }
+        }
+        else
+        {
+            if (pathname.IsEqualToExtension(".yaml"))
+            {
+                ParticleEmitter *emitter = new ParticleEmitter();
+                emitter->LoadFromYaml(pathname);
+                emitter->SaveToYaml(pathname);
+                SafeRelease(emitter);
+            }
+        }
+    }
 }

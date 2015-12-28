@@ -43,14 +43,14 @@
 
 // framework
 #include "Scene3D/SceneFileV2.h"
-#include "Render/Highlevel/ShadowVolumeRenderPass.h"
 #include "Scene3D/Systems/RenderUpdateSystem.h"
 #include "Render/Highlevel/RenderBatchArray.h"
+#include "Render/Highlevel/RenderPass.h"
 
 #include "Scene/System/CameraSystem.h"
 #include "Scene/System/CollisionSystem.h"
 #include "Scene/System/HoodSystem.h"
-
+#include "Scene3D/Entity.h"
 #include "Scene/System/EditorLODSystem.h"
 
 
@@ -71,10 +71,6 @@ SceneEditor2::SceneEditor2()
     , isLoaded(false)
     , isHUDVisible(true)
 {
-    SetClearBuffers(RenderManager::DEPTH_BUFFER | RenderManager::STENCIL_BUFFER);
-
-    renderStats.Clear();
-
     EditorCommandNotify *notify = new EditorCommandNotify(this);
     commandStack.SetNotify(notify);
     SafeRelease(notify);
@@ -121,9 +117,6 @@ SceneEditor2::SceneEditor2()
     visibilityToolSystem = new VisibilityToolSystem(this);
     AddSystem(visibilityToolSystem, 0, SCENE_SYSTEM_REQUIRE_PROCESS | SCENE_SYSTEM_REQUIRE_INPUT, renderUpdateSystem);
 
-    grassEditorSystem = new GrassEditorSystem(this);
-    AddSystem(grassEditorSystem, 0, SCENE_SYSTEM_REQUIRE_INPUT);
-
     rulerToolSystem = new RulerToolSystem(this);
     AddSystem(rulerToolSystem, 0, SCENE_SYSTEM_REQUIRE_PROCESS | SCENE_SYSTEM_REQUIRE_INPUT, renderUpdateSystem);
 
@@ -164,9 +157,11 @@ SceneEditor2::SceneEditor2()
     modifSystem->AddDelegate(wayEditSystem);
 
     editorLODSystem = new EditorLODSystem(this);
-    AddSystem(editorLODSystem, MAKE_COMPONENT_MASK(Component::LOD_COMPONENT));
+    AddSystem(editorLODSystem, MAKE_COMPONENT_MASK(Component::LOD_COMPONENT), SCENE_SYSTEM_REQUIRE_PROCESS);
 
-    SetShadowBlendMode(ShadowPassBlendMode::MODE_BLEND_MULTIPLY);
+    float32* clearColor = renderSystem->GetMainRenderPass()->GetPassConfig().colorBuffer[0].clearColor;
+    clearColor[0] = clearColor[1] = clearColor[2] = .3f;
+    clearColor[3] = 1.f;
 
     SceneSignals::Instance()->EmitOpened(this);
 
@@ -192,6 +187,7 @@ bool SceneEditor2::Load(const DAVA::FilePath &path)
 		commandStack.SetClean(true);
     }
 
+	SceneValidator::ExtractEmptyRenderObjectsAndShowErrors(this);
     SceneValidator::Instance()->ValidateSceneAndShowErrors(this, path);
     
 	SceneSignals::Instance()->EmitLoaded(this);
@@ -203,8 +199,18 @@ SceneFileV2::eError SceneEditor2::Save(const DAVA::FilePath & path, bool saveFor
 {
 	ExtractEditorEntities();
 
-	DAVA::SceneFileV2::eError err = Scene::SaveScene(path, saveForGame);
-	if(DAVA::SceneFileV2::ERROR_NO_ERROR == err)
+    ScopedPtr<Texture> tilemaskTexture(nullptr);
+    bool needToRestoreTilemask = false;
+    if (landscapeEditorDrawSystem)
+    { //dirty magic to work with new saving of materials and FBO landsacpe texture
+        tilemaskTexture = SafeRetain(landscapeEditorDrawSystem->GetTileMaskTexture());
+
+        needToRestoreTilemask = landscapeEditorDrawSystem->SaveTileMaskTexture();
+        landscapeEditorDrawSystem->ResetTileMaskTexture();
+    }
+
+    DAVA::SceneFileV2::eError err = Scene::SaveScene(path, saveForGame);
+    if(DAVA::SceneFileV2::ERROR_NO_ERROR == err)
 	{
 		curScenePath = path;
 		isLoaded = true;
@@ -214,14 +220,16 @@ SceneFileV2::eError SceneEditor2::Save(const DAVA::FilePath & path, bool saveFor
 		commandStack.SetClean(true);
 	}
 
-	if(landscapeEditorDrawSystem)
-		landscapeEditorDrawSystem->SaveTileMaskTexture();
+    if (needToRestoreTilemask)
+    {
+        landscapeEditorDrawSystem->SetTileMaskTexture(tilemaskTexture);
+    }
 
-	InjectEditorEntities();
+    InjectEditorEntities();
 
-	SceneSignals::Instance()->EmitSaved(this);
+    SceneSignals::Instance()->EmitSaved(this);
 
-	return err;
+    return err;
 }
 
 void SceneEditor2::ExtractEditorEntities()
@@ -264,27 +272,29 @@ SceneFileV2::eError SceneEditor2::Save()
 bool SceneEditor2::Export(const DAVA::eGPUFamily newGPU)
 {
 	SceneExporter exporter;
-	
-	FilePath projectPath(ProjectManager::Instance()->CurProjectPath());
-	
-	exporter.SetInFolder(projectPath + String("DataSource/3d/"));
+
+    FilePath projectPath(ProjectManager::Instance()->GetProjectPath());
+
+    exporter.SetInFolder(projectPath + String("DataSource/3d/"));
     exporter.SetOutFolder(projectPath + String("Data/3d/"));
 	exporter.SetGPUForExporting(newGPU);
 
 	DAVA::VariantType quality = SettingsManager::Instance()->GetValue(Settings::General_CompressionQuality);
 	exporter.SetCompressionQuality((DAVA::TextureConverter::eConvertQuality)quality.AsInt32());
 
-	Set<String> errorLog;
+    ScopedPtr<SceneEditor2> clonedScene(CreateCopyForExport());
+    if (clonedScene)
+    {
+        Set<String> errorLog;
+        exporter.ExportScene(clonedScene, GetScenePath(), errorLog);
+        for (auto& error : errorLog)
+        {
+            Logger::Error("Export error: %s", error.c_str());
+        }
 
-	SceneEditor2 *clonedScene = CreateCopyForExport();
-	exporter.ExportScene(clonedScene, GetScenePath(), errorLog);
-	for (Set<String>::iterator iter = errorLog.begin(); iter != errorLog.end(); ++iter)
-	{
-		Logger::Error("Export error: %s", iter->c_str());
-	}
-
-	clonedScene->Release();
-	return (errorLog.size() == 0);
+        return errorLog.empty();
+    }
+    return false;
 }
 
 const DAVA::FilePath & SceneEditor2::GetScenePath()
@@ -380,6 +390,9 @@ void SceneEditor2::SetChanged(bool changed)
 
 void SceneEditor2::Update(float timeElapsed)
 {
+    renderStats = Renderer::GetRenderStats();
+    Renderer::GetRenderStats().Reset();
+
     Scene::Update(timeElapsed);
 }
 
@@ -390,35 +403,20 @@ void SceneEditor2::SetViewportRect(const DAVA::Rect &newViewportRect)
 
 void SceneEditor2::Draw()
 {
+    Scene::Draw();
 
-    RenderManager::Instance()->ClearStats();
-	
-//	NMaterial* global = renderSystem->GetMaterialSystem()->GetMaterial(MATERIAL_FOR_REBIND);
-//	DVASSERT(global);
-//	
-//	if(global)
-//	{
-//		global->Rebind();
-//	}
-	
-	Scene::Draw();
-    
-    renderStats = RenderManager::Instance()->GetStats();
+    if (isHUDVisible)
+    {
+        gridSystem->Draw();
+        cameraSystem->Draw();
 
-	if(isHUDVisible)
-	{
-		gridSystem->Draw();
-		cameraSystem->Draw();
-
-		if(collisionSystem)
-			collisionSystem->Draw();
+        if (collisionSystem)
+            collisionSystem->Draw();
 
 		modifSystem->Draw();
 
 		if(structureSystem)
 			structureSystem->Draw();
-
-		materialSystem->Draw();
 	}
  
 	tilemaskEditorSystem->Draw();
@@ -450,7 +448,6 @@ void SceneEditor2::EditorCommandProcess(const Command2 *command, bool redo)
 	selectionSystem->ProcessCommand(command, redo);
 	hoodSystem->ProcessCommand(command, redo);
 	modifSystem->ProcessCommand(command, redo);
-    grassEditorSystem->ProcessCommand(command, redo);
 	
 	if(structureSystem)
 		structureSystem->ProcessCommand(command, redo);
@@ -505,26 +502,7 @@ void SceneEditor2::EditorCommandNotify::CleanChanged(bool clean)
 	}
 }
 
-
-void SceneEditor2::SetShadowBlendMode(DAVA::ShadowPassBlendMode::eBlend blend)
-{
-	if(GetRenderSystem())
-	{
-		GetRenderSystem()->SetShadowBlendMode(blend);
-	}
-}
-
-DAVA::ShadowPassBlendMode::eBlend SceneEditor2::GetShadowBlendMode() const
-{
-	if(GetRenderSystem())
-	{
-		return GetRenderSystem()->GetShadowBlendMode();
-	}
-
-	return DAVA::ShadowPassBlendMode::MODE_BLEND_COUNT;
-}
-
-const RenderManager::Stats & SceneEditor2::GetRenderStats() const
+const RenderStats& SceneEditor2::GetRenderStats() const
 {
     return renderStats;
 }
@@ -560,11 +538,6 @@ void SceneEditor2::DisableTools(int32 toolFlags, bool saveChanges /*= true*/)
 	{
 		Exec(new ActionDisableNotPassable(this));
 	}
-
-    if(toolFlags & LANDSCAPE_TOOL_GRASS_EDITOR)
-    {
-        grassEditorSystem->EnableGrassEdit(false);
-    }
 }
 
 bool SceneEditor2::IsToolsEnabled(int32 toolFlags)
@@ -600,11 +573,6 @@ bool SceneEditor2::IsToolsEnabled(int32 toolFlags)
 	{
 		res |= landscapeEditorDrawSystem->IsNotPassableTerrainEnabled();
 	}
-
-    if(toolFlags & LANDSCAPE_TOOL_GRASS_EDITOR)
-    {
-        res |= grassEditorSystem->IsLandscapeEditingEnabled();
-    }
 
 	return res;
 }
@@ -643,11 +611,6 @@ int32 SceneEditor2::GetEnabledTools()
 		toolFlags |= LANDSCAPE_TOOL_NOT_PASSABLE_TERRAIN;
 	}
 
-    if(grassEditorSystem->IsLandscapeEditingEnabled())
-    {
-        toolFlags |= LANDSCAPE_TOOL_GRASS_EDITOR;
-    }
-
 	return toolFlags;
 }
 
@@ -673,6 +636,10 @@ SceneEditor2 * SceneEditor2::CreateCopyForExport()
         {
             sceneCopy->RemoveSystems();
             ret = sceneCopy;
+        }
+        else
+        {
+            SafeRelease(sceneCopy);
         }
 
         FileSystem::Instance()->DeleteFile(tmpScenePath);
@@ -729,7 +696,7 @@ void SceneEditor2::Setup3DDrawing()
 {
     if (drawCamera)
     {
-        drawCamera->SetupDynamicParameters();
+        drawCamera->SetupDynamicParameters(false);
     }
 }
 

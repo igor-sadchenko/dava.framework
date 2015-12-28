@@ -42,21 +42,23 @@ class UIScrollViewContainer : public UIControl
 protected:
 	virtual ~UIScrollViewContainer();
 public:
-	UIScrollViewContainer(const Rect &rect = Rect(), bool rectInAbsoluteCoordinates = false);
-	
-	virtual UIControl *Clone();
-	virtual void CopyDataFrom(UIControl *srcControl);
-	
+    UIScrollViewContainer(const Rect& rect = Rect());
+
+    UIScrollViewContainer* Clone() override;
+    virtual void CopyDataFrom(UIControl* srcControl);
+
 public:
 	virtual void Update(float32 timeElapsed);
 	virtual void Input(UIEvent *currentTouch);
     virtual void InputCancelled(UIEvent *currentInput);
 	virtual bool SystemInput(UIEvent *currentInput);
-	virtual void SetRect(const Rect &rect);
+    virtual void SetSize(const Vector2& size);
     virtual void WillDisappear();
 
+    // Set container relative position and enable*Scroll properties based on self and parent size
+    void ApplySizeChanges();
 
-	// The amount of pixels user must move the finger on the button to switch from button to scrolling (default 15)
+    // The amount of pixels user must move the finger on the button to switch from button to scrolling (default 15)
 	void SetTouchTreshold(int32 holdDelta);
 	int32 GetTouchTreshold();
 
@@ -81,6 +83,9 @@ protected:
 	
 	Vector2 	oldPos;
 	Vector2		newPos;
+
+    float32 oldScroll = 0.f;
+    float32 newScroll = 0.f;
 
     ScrollHelper *currentScroll;
 

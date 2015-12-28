@@ -47,8 +47,8 @@ class LibraryModel : public QStandardItemModel, private PackageListener
     };
 public:
     LibraryModel(PackageNode *root, QObject *parent = nullptr);
-    virtual ~LibraryModel();
-   
+    ~LibraryModel() override;
+
     Qt::ItemFlags flags(const QModelIndex &index) const override;
     QStringList mimeTypes() const override;
     QMimeData *mimeData(const QModelIndexList &indexes) const override;
@@ -59,24 +59,18 @@ private:
     void AddImportedControl(PackageNode* node);
     void CreateControlsRootItem();
     void CreateImportPackagesRootItem();
+    
+private:
     PackageNode *root;
     QStandardItem *defaultControlsRootItem, *controlsRootItem, *importedPackageRootItem;
-    QStringList defaultControls;
+    DAVA::Vector<ControlNode*> defaultControls;
 
 private: // PackageListener
     void ControlPropertyWasChanged(ControlNode *node, AbstractProperty *property) override;
-
-    void ControlWillBeAdded(ControlNode *node, ControlsContainerNode *destination, int row) override;
     void ControlWasAdded(ControlNode *node, ControlsContainerNode *destination, int row) override;
-
     void ControlWillBeRemoved(ControlNode *node, ControlsContainerNode *from) override;
-    void ControlWasRemoved(ControlNode *node, ControlsContainerNode *from) override;
-
-    void ImportedPackageWillBeAdded(PackageNode *node, ImportedPackagesNode *to, int index) override;
     void ImportedPackageWasAdded(PackageNode *node, ImportedPackagesNode *to, int index) override;
-
     void ImportedPackageWillBeRemoved(PackageNode *node, ImportedPackagesNode *from) override;
-    void ImportedPackageWasRemoved(PackageNode *node, ImportedPackagesNode *from) override;
 
 };
 

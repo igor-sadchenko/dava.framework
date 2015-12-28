@@ -80,6 +80,7 @@ public:
     void Resume();
 
     void SetCurrentLocale(const String & langID);
+    String GetCurrentLocale() const;
 
     void SetListenerPosition(const Vector3 & position);
     void SetListenerOrientation(const Vector3 & forward, const Vector3 & left);
@@ -88,6 +89,9 @@ public:
     float32 GetGroupVolume(const FastName & groupName);
 
     void InitFromQualitySettings();
+
+    void SetDebugMode(bool debug = true);
+    bool IsDebugModeOn() const;
 
 protected:
     void ParseSFXConfig(const FilePath & configPath);

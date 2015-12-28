@@ -14,13 +14,23 @@ set ( FRAMEWORK_DEFINITIONS
 -DCURL_STATICLIB
 )
 
+if( DAVA_DISABLE_AUTOTESTS  )
+    list( APPEND FRAMEWORK_DEFINITIONS -DDISABLE_AUTOTESTS )
+endif()
+
 if( NOT DISABLE_SOUNDS )
     list( APPEND FRAMEWORK_DEFINITIONS -DDAVA_FMOD )
 
 endif()
 
+if( DAVA_USE_RENDERSTATS )
+    list( APPEND FRAMEWORK_DEFINITIONS -D__DAVAENGINE_RENDERSTATS__ )
+endif()
+
 set_property( GLOBAL PROPERTY USE_FOLDERS ON )
 set_property( GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER ${DAVA_PREDEFINED_TARGETS_FOLDER} )
+
+set ( IGNORED_RHI_FOLDER "" )
 
 if( ANDROID )
     find_package( ZLIB )
@@ -39,13 +49,9 @@ if( ANDROID )
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libzip_android.a"
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libfribidi_android.a"
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libunibreak_android.a"
-         "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libiconv_android.so"
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libfmodevent.so"
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libfmodex.so"
-         "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libTextureConverter_android.a"
-         "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libbox2d.a"
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libuv_android.a"
-         "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libiconv_android.so"
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/liblua_android.a"
          "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/libwebp_android.a"
          )
@@ -56,13 +62,16 @@ if( ANDROID )
          "-llog"
          "-landroid"
          "-lGLESv2"
-         "-lstdc++"
+         "-lstdc++" 
+         "-latomic"
          )
 
     list ( APPEND LIST_SHARED_LIBRARIES ${LIST_LIBRARIES} )
 
     set ( FRAMEWORK_DEFINITIONS  ${FRAMEWORK_DEFINITIONS} -D__ANDROID__ )
     set ( LIBRARY_OUTPUT_PATH    ${THIRD_PARTY_LIBRARIES_PATH} )
+
+    set ( IGNORED_RHI_FOLDER "Metal" "DX9" "DX11" )
 
 elseif( MACOS )
     find_package( ZLIB )
@@ -89,17 +98,20 @@ elseif( MACOS )
 
     file ( GLOB LIB_LIST "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/*.a" )
     list ( APPEND LIST_SHARED_LIBRARIES ${LIB_LIST}  )   
+    
+    set ( IGNORED_RHI_FOLDER "Metal" "DX9" "DX11" )
 
 elseif( IOS )  
     find_package( ZLIB )
 
-    add_definitions( -DDARWIN_NO_CARBON ) 
+    add_definitions( -DDDARWIN_NO_CARBON ) 
     
     INCLUDE_DIRECTORIES ( /System/Library/Frameworks )
     foreach( NAME  CoreGraphics 
                    Foundation 
                    UIKit 
                    OpenGLES
+                   Metal
                    OpenAL
                    CoreAudio
                    AVFoundation
@@ -122,47 +134,61 @@ elseif( IOS )
     file ( GLOB RESOURCE "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/*.a" )
     list ( APPEND LIST_SHARED_LIBRARIES ${RESOURCE}  )    
 
+    set ( IGNORED_RHI_FOLDER "DX9" "DX11" )
+
 elseif ( WINDOWS_UAP )
+    add_static_libs_win_uap ( "${DAVA_WIN_UAP_LIBRARIES_PATH_COMMON}" LIST_SHARED_LIBRARIES )
 
-    set( DAVA_THIRD_PARTY_INCLUDES_PATH "${DAVA_THIRD_PARTY_INCLUDES_PATH}" 
-	                                    "${DAVA_THIRD_PARTY_ROOT_PATH}/angle-ms-master/include" )
-
-	set ( DAVA_WIN_STORE_LIBRARIES_PATH "${DAVA_THIRD_PARTY_ROOT_PATH}/lib_CMake/win10" ) 
-
-	#file ( GLOB SHARED_LIB_LIST "${DAVA_WIN_STORE_LIBRARIES_PATH}/*.lib" )
-	#list ( APPEND LIST_SHARED_LIBRARIES ${SHARED_LIB_LIST}  )
-	#list ( APPEND LIST_SHARED_LIBRARIES_RELEASE  "" )
-	#list ( APPEND LIST_SHARED_LIBRARIES_DEBUG   "" )
-
-	list ( APPEND LIST_SHARED_LIBRARIES    "Wininet.lib" "ws2_32.lib" "winmm.lib" "wldap32.lib" "iphlpapi.lib" "Gdi32.lib" "dbghelp.lib" "d2d1.lib" "d3d11.lib" "d3dcompiler.lib" "dxgi.lib" "windowscodecs.lib" "dwrite.lib" )
-	
-    #choose target architecture libraries
-    if( "${CMAKE_GENERATOR_PLATFORM}" STREQUAL "ARM" )
-        set ( LIBS_ARCH_SELECTOR "arm" )
-    elseif ( "${CMAKE_GENERATOR_PLATFORM}" STREQUAL "x64" )
-        set ( LIBS_ARCH_SELECTOR "x64" )
-    else ()
-        set ( LIBS_ARCH_SELECTOR "x86" )
-    endif ()
-
-    file ( GLOB DEBUG_LIB_LIST "${DAVA_WIN_STORE_LIBRARIES_PATH}/${LIBS_ARCH_SELECTOR}/Debug/*.lib" )
-    list ( APPEND LIST_SHARED_LIBRARIES_DEBUG ${DEBUG_LIB_LIST}  )
-
-    file ( GLOB RELEASE_LIB_LIST "${DAVA_WIN_STORE_LIBRARIES_PATH}/${LIBS_ARCH_SELECTOR}/Release/*.lib" )
-    list ( APPEND LIST_SHARED_LIBRARIES_RELEASE ${RELEASE_LIB_LIST}  )
+    # list each library on its own line to ease library addition
+    list ( APPEND LIST_SHARED_LIBRARIES
+            "d2d1.lib"
+            "d3d11.lib"
+            "d3dcompiler.lib"
+            "dxgi.lib"
+            "dxguid.lib"
+            "dwrite.lib"
+    )
+    set ( IGNORED_RHI_FOLDER "DX9" "GLES2" "Metal" )
 
 elseif( WIN32 ) 
+    include( FindWindowsSDK )
+    include_directories   ( ${WINDOWSSDK_LATEST_DIR}/include/shared ) 
+    include_directories   ( $ENV{DXSDK_DIR}/include ) 
 
-
+#    link_directories       ( $ENV{DXSDK_DIR}/lib/x86 )
+    link_directories       ( ${WINDOWSSDK_LATEST_DIR}/lib/x86 )
     file ( GLOB LIB_LIST "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/D/*" )
     list ( APPEND LIST_SHARED_LIBRARIES_DEBUG ${LIB_LIST}  )
 
     file ( GLOB LIB_LIST "${DAVA_THIRD_PARTY_LIBRARIES_PATH}/*.lib" )
     list ( APPEND LIST_SHARED_LIBRARIES_RELEASE ${LIB_LIST}  )
 
-    list ( APPEND LIST_SHARED_LIBRARIES         "Wininet.lib" "opengl32.lib" "ws2_32.lib" "winmm.lib" "wldap32.lib" "iphlpapi.lib" "Gdi32.lib" "glu32.lib" "psapi.lib" "dbghelp.lib" )
+    # list each library on its own line to ease library addition
+    list ( APPEND LIST_SHARED_LIBRARIES
+            "Wininet.lib"
+            "opengl32.lib"
+            "ws2_32.lib"
+            "winmm.lib"
+            "wldap32.lib"
+            "iphlpapi.lib"
+            "Gdi32.lib"
+            "glu32.lib"
+            "psapi.lib"
+            "dbghelp.lib"
+            "userenv.lib"
+            "${WINDOWSSDK_LATEST_DIR}/lib/winv6.3/um/x86/d3d9.lib"
+            "$ENV{DXSDK_DIR}/lib/x86/d3dx9.lib"
+            "${WINDOWSSDK_LATEST_DIR}/lib/winv6.3/um/x86/d3d11.lib"
+            "${WINDOWSSDK_LATEST_DIR}/lib/winv6.3/um/x86/d3dcompiler.lib"
+            "${WINDOWSSDK_LATEST_DIR}/lib/winv6.3/um/x86/dxguid.lib"
+            "delayimp.lib"
+            "dxgi.lib"
+    )
+
     list ( APPEND LIST_SHARED_LIBRARIES_RELEASE "msvcrt.lib"  )
     list ( APPEND LIST_SHARED_LIBRARIES_DEBUG   "msvcrtd.lib" )
+
+    set ( IGNORED_RHI_FOLDER "Metal" )
 
 endif()
 
@@ -172,19 +198,42 @@ if( ZLIB_FOUND )
 endif()
 
 # Define source 
-define_source_folders  ( SRC_ROOT "." )
+
+define_source_folders  ( SRC_ROOT "." GLOB_ERASE_FOLDERS "${IGNORED_RHI_FOLDER}" )
+
 generate_source_groups_project ()
 
+
+
 set_project_files_properties( "${PROJECT_SOURCE_FILES_CPP}" )
+generated_unity_sources     ( PROJECT_SOURCE_FILES IGNORE_LIST        
+                                                        "Internal/Autotesting"
+                                                   IGNORE_LIST_APPLE  
+                                                        "TemplateMacOS/CoreMacOSPlatformBase.cpp"
+                                                        "iOS/ICloudKeyValue.cpp"
+                                                        "Notification/LocalNotificationIOS.cpp"
+                                                        "Concurrency/ThreadPosix.cpp"
+                                                        "Render/Texture.cpp" 
+                                                        "Render/RHI/GLES2"
+                                                        "TemplateMacOS/MainWindowController.mm"
+                                                    IGNORE_LIST_IOS
+                                                        "TemplateiOS/BackgroundView.mm"
+                                                        "TemplateiOS/HelperAppDelegate.mm"
+                                                        "TemplateiOS/DPIHelperiOS.mm"
+                                                        "TemplateiOS"
+                                                        "UI/UITextFieldiPhone.mm"
+                                                   )
 
-include_directories    (.)
-include_directories    ( ${DAVA_INCLUDE_DIR} )
-include_directories    ( ${ADD_ENGINE_INCLUDES_DIR} ) 
-include_directories    ( ${DAVA_THIRD_PARTY_INCLUDES_PATH} ) 
-set                    ( DAVA_INCLUDE_DIR ${DAVA_INCLUDE_DIR} ${ADD_ENGINE_INCLUDES_DIR} PARENT_SCOPE )
 
-add_definitions        ( ${FRAMEWORK_DEFINITIONS} )
-add_library            ( ${PROJECT_NAME} STATIC ${PROJECT_SOURCE_FILES} ${RESOURCE} )
+include_directories      (.)
+include_directories      ( ${DAVA_INCLUDE_DIR} )
+include_directories      ( ${ADD_ENGINE_INCLUDES_DIR} ) 
+include_directories      ( ${DAVA_THIRD_PARTY_INCLUDES_PATH} ) 
+
+set                      ( DAVA_INCLUDE_DIR ${DAVA_INCLUDE_DIR} ${ADD_ENGINE_INCLUDES_DIR} PARENT_SCOPE )
+
+add_definitions          ( ${FRAMEWORK_DEFINITIONS} )
+add_library              ( ${PROJECT_NAME} STATIC ${PROJECT_SOURCE_FILES} ${RESOURCE} )
 
 if( LINK_THIRD_PARTY )                 
    MERGE_STATIC_LIBRARIES( ${PROJECT_NAME} ALL     "${LIST_SHARED_LIBRARIES}" )
@@ -204,4 +253,6 @@ endforeach ()
 
 install_libraries( ${PROJECT_NAME} )
 
-
+if ( WINDOWS_UAP )
+    set_property(TARGET ${PROJECT_NAME} PROPERTY VS_MOBILE_EXTENSIONS_VERSION ${WINDOWS_UAP_MOBILE_EXT_SDK_VERSION} )
+endif()

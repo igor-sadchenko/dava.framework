@@ -112,14 +112,14 @@ DAVA::Image * ImageSplitterDialogNormal::CreateMergedImage(DAVA::Image *firstIma
 {
     auto mergedImage = Image::Create(firstImage->width, firstImage->height, FORMAT_RGBA8888);
 
-    auto size = firstImage->width * firstImage->height;
+    uint32 size = firstImage->width * firstImage->height;
     auto pixelSize = PixelFormatDescriptor::GetPixelFormatSizeInBytes(FORMAT_RGBA8888);
     DVASSERT(CHANNELS_COUNT == pixelSize);
-    
-    for(auto i = 0; i < size; ++i)
+
+    for (uint32 i = 0; i < size; ++i)
     {
-        auto offset = i * pixelSize;
-        
+        uint32 offset = i * pixelSize;
+
         mergedImage->data[offset + RED] = firstImage->data[offset + RED];
         mergedImage->data[offset + GREEN] = firstImage->data[offset + GREEN];
 

@@ -26,18 +26,30 @@
     SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 =====================================================================================*/
 
-
 #include "Infrastructure/GameCore.h"
 
 #include "Platform/DateTime.h"
-#include "TexturePacker/CommandLineParser.h"
+#include "CommandLine/CommandLineParser.h"
 #include "Utils/Utils.h"
 #include "Infrastructure/TestListScreen.h"
 #include "Tests/NotificationTest.h"
 #include "Tests/UIScrollViewTest.h"
 #include "Tests/SpeedLoadImagesTest.h"
 #include "Tests/MultilineTest.h"
+#include "Tests/StaticTextTest.h"
+#include "Tests/StaticWebViewTest.h"
+#include "Tests/UIMovieTest.h"
+#include "Tests/FontTest.h"
+#include "Tests/WebViewTest.h"
+#include "Tests/FunctionSignalTest.h"
+#include "Tests/KeyboardTest.h"
+#include "Tests/FullscreenTest.h"
+#include "Tests/UIBackgroundTest.h"
+#include "Tests/ClipTest.h"
+#include "Tests/InputTest.h"
 //$UNITTEST_INCLUDE
+
+#include "MemoryManager/MemoryProfiler.h"
 
 void GameCore::RunOnlyThisTest()
 {
@@ -54,25 +66,39 @@ void GameCore::RegisterTests()
     new UIScrollViewTest();
     new NotificationScreen();
     new SpeedLoadImagesTest();
-	new MultilineTest();
+    new MultilineTest();
+    new StaticTextTest();
+    new StaticWebViewTest();
+    new UIMovieTest();
+    new FontTest();
+    new WebViewTest();
+    new FunctionSignalTest();
+    new KeyboardTest();
+    new FullscreenTest();
+    new UIBackgroundTest();
+    new ClipTest();
+    new InputTest();
+    //$UNITTEST_CTOR
 }
 
 #include <fstream>
 #include <algorithm>
 
 using namespace DAVA;
+using namespace DAVA::Net;
 
 void GameCore::OnAppStarted()
 {
     testListScreen = new TestListScreen();
     UIScreenManager::Instance()->RegisterScreen(0, testListScreen);
-    
+
+    InitNetwork();
     RunOnlyThisTest();
     RegisterTests();
     RunTests();
 }
 
-GameCore::GameCore() 
+GameCore::GameCore()
     : currentScreen(nullptr)
     , testListScreen(nullptr)
 {
@@ -82,7 +108,7 @@ GameCore::~GameCore()
 {
 }
 
-void GameCore::RegisterScreen(BaseScreen *screen)
+void GameCore::RegisterScreen(BaseScreen* screen)
 {
     UIScreenManager::Instance()->RegisterScreen(screen->GetScreenId(), screen);
 
@@ -99,37 +125,36 @@ void GameCore::ShowStartScreen()
 void GameCore::CreateDocumentsFolder()
 {
     FilePath documentsPath = FileSystem::Instance()->GetUserDocumentsPath() + "TestBed/";
-    
+
     FileSystem::Instance()->CreateDirectory(documentsPath, true);
     FileSystem::Instance()->SetCurrentDocumentsDirectory(documentsPath);
 }
 
-
-File * GameCore::CreateDocumentsFile(const String &filePathname)
+File* GameCore::CreateDocumentsFile(const String& filePathname)
 {
     FilePath workingFilepathname = FilePath::FilepathInDocuments(filePathname);
 
     FileSystem::Instance()->CreateDirectory(workingFilepathname.GetDirectory(), true);
-    
-    File *retFile = File::Create(workingFilepathname, File::CREATE | File::WRITE);
+
+    File* retFile = File::Create(workingFilepathname, File::CREATE | File::WRITE);
     return retFile;
 }
 
 void GameCore::OnAppFinished()
 {
-    for(auto testScreen : screens)
+    for (auto testScreen : screens)
     {
         SafeRelease(testScreen);
     }
     screens.clear();
-    
+
     SafeRelease(testListScreen);
+    netLogger.Uninstall();
 }
 
 void GameCore::BeginFrame()
 {
     ApplicationCore::BeginFrame();
-    RenderManager::Instance()->ClearWithColor(0.f, 0.f, 0.f, 0.f);
 }
 
 void GameCore::RunTests()
@@ -171,8 +196,49 @@ bool GameCore::IsNeedSkipTest(const BaseScreen& screen) const
     return 0 != CompareCaseInsensitive(runOnlyThisTest, name);
 }
 
+void GameCore::InitNetwork()
+{
+    auto loggerCreate = [this](uint32 serviceId, void*) -> IChannelListener* {
+        if (!loggerInUse)
+        {
+            loggerInUse = true;
+            return &netLogger;
+        }
+        return nullptr;
+    };
+    NetCore::Instance()->RegisterService(NetCore::SERVICE_LOG, loggerCreate,
+                                         [this](IChannelListener* obj, void*) -> void { loggerInUse = false; });
 
+#if defined(DAVA_MEMORY_PROFILING_ENABLE)
+    auto memprofCreate = [this](uint32 serviceId, void*) -> IChannelListener* {
+        if (!memprofInUse)
+        {
+            memprofInUse = true;
+            return &memprofServer;
+        }
+        return nullptr;
+    };
+    NetCore::Instance()->RegisterService(NetCore::SERVICE_MEMPROF, memprofCreate,
+                                         [this](IChannelListener* obj, void*) -> void { memprofInUse = false; });
+#endif
+    NetConfig config(SERVER_ROLE);
+    config.AddTransport(TRANSPORT_TCP, Net::Endpoint(NetCore::DEFAULT_TCP_PORT));
+    config.AddService(NetCore::SERVICE_LOG);
+#if defined(DAVA_MEMORY_PROFILING_ENABLE)
+    config.AddService(NetCore::SERVICE_MEMPROF);
+#endif
+    peerDescr = PeerDescription(config);
+    Net::Endpoint annoUdpEndpoint(NetCore::defaultAnnounceMulticastGroup, NetCore::DEFAULT_UDP_ANNOUNCE_PORT);
+    Net::Endpoint annoTcpEndpoint(NetCore::DEFAULT_TCP_ANNOUNCE_PORT);
+    id_anno = NetCore::Instance()->CreateAnnouncer(annoUdpEndpoint, DEFAULT_ANNOUNCE_TIME_PERIOD, MakeFunction(this, &GameCore::AnnounceDataSupplier), annoTcpEndpoint);
+    id_net = NetCore::Instance()->CreateController(config, nullptr);
+}
 
-
-
-
+size_t GameCore::AnnounceDataSupplier(size_t length, void* buffer)
+{
+    if (true == peerDescr.NetworkInterfaces().empty())
+    {
+        peerDescr.SetNetworkInterfaces(NetCore::Instance()->InstalledInterfaces());
+    }
+    return peerDescr.Serialize(buffer, length);
+}

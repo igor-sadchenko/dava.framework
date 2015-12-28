@@ -26,115 +26,477 @@
     SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 =====================================================================================*/
 
-
-
-#include "Platform/DeviceInfo.h"
-#include "Utils/StringFormat.h"
-#include "Utils/MD5.h"
-#include "Utils/Utils.h"
-#include "Debug/DVAssert.h"
+#include "Base/Platform.h"
 
 #if defined(__DAVAENGINE_WIN_UAP__)
 
-#include "winsock2.h"
-#include "Iphlpapi.h"
+#include <Iphlpapi.h>
+#include <winsock2.h>
+#include <collection.h>
 
-using namespace Windows::Foundation;
-using namespace Windows::UI::Core;
-using namespace Windows::Graphics::Display;
+#include "Debug/DVAssert.h"
+#include "FileSystem/FileSystem.h"
+#include "Utils/MD5.h"
+#include "Utils/StringFormat.h"
+#include "Utils/Utils.h"
+#include "Base/GlobalEnum.h"
+
+#include "Platform/TemplateWin32/DeviceInfoWinUAP.h"
+
+__DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__MARKER__
+#include "Platform/TemplateWin32/CorePlatformWinUAP.h"
+const wchar_t* KOSTIL_SURFACE_MOUSE =    L"NTRG0001";
+const wchar_t* KOSTIL_SURFACE_KEYBOARD = L"MSHW0029";
+
+using namespace ::Windows::UI::Core;
+using namespace ::Windows::Graphics::Display;
+using namespace ::Windows::Devices::Input;
+using namespace ::Windows::UI::ViewManagement;
+using namespace ::Windows::Foundation;
+using namespace ::Windows::Devices;
+using namespace ::Windows::Devices::Enumeration;
+using namespace ::Windows::Devices::HumanInterfaceDevice;
+using namespace ::Windows::Security::ExchangeActiveSyncProvisioning;
+using namespace ::Windows::Networking::Connectivity;
+using namespace ::Windows::System::UserProfile;
+using namespace ::Windows::UI::Xaml;
+using namespace ::Windows::System::Profile;
+using namespace ::Windows::Globalization;
 
 namespace DAVA
 {
+// MSDN:: https://msdn.microsoft.com/en-us/library/windows/hardware/ff541364(v=vs.85).aspx
+const wchar_t* GUID_DEVINTERFACE_MOUSE = L"System.Devices.InterfaceClassGuid:=\"{378DE44C-56EF-11D1-BC8C-00A0C91405DD}\"";
+const wchar_t* GUID_DEVINTERFACE_KEYBOARD = L"System.Devices.InterfaceClassGuid:=\"{884b96c3-56ef-11d1-bc8c-00a0c91405dd}\"";
+const wchar_t* GUID_DEVINTERFACE_TOUCH = L"System.Devices.InterfaceClassGuid:=\"{4D1E55B2-F16F-11CF-88CB-001111000030}\"";
+const char* DEFAULT_TOUCH_ID = "touchId";
 
-String DeviceInfo::GetVersion()
+DeviceInfoPrivate::DeviceInfoPrivate()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return "Not yet implemented";
+    TouchCapabilities touchCapabilities;
+    isTouchPresent = (1 == touchCapabilities.TouchPresent); //  Touch is always present in MSVS simulator
+    if (isTouchPresent)
+    {
+        auto hidsAccessor(hids.GetAccessor());
+        Set<String>& setIdDevices = (*(hidsAccessor))[TOUCH];
+        setIdDevices.emplace(DEFAULT_TOUCH_ID);
+    }
+    isMobileMode = Windows::Foundation::Metadata::ApiInformation::IsApiContractPresent("Windows.Phone.PhoneContract", 1);
+    platform = isMobileMode ? DeviceInfo::PLATFORM_PHONE_WIN_UAP : DeviceInfo::PLATFORM_DESKTOP_WIN_UAP;
+
+    AnalyticsVersionInfo ^ versionInfo = AnalyticsInfo::VersionInfo;
+    Platform::String ^ deviceVersion = versionInfo->DeviceFamilyVersion;
+    Platform::String ^ deviceFamily = versionInfo->DeviceFamily;
+    String vertionString = RTStringToString(deviceVersion);
+    int64 versionInt = _atoi64(vertionString.c_str());
+    std::stringstream versionStream;
+    versionStream << ((versionInt & 0xFFFF000000000000L) >> 48) << ".";
+    versionStream << ((versionInt & 0x0000FFFF00000000L) >> 32) << ".";
+    versionStream << ((versionInt & 0x00000000FFFF0000L) >> 16) << ".";
+    versionStream << (versionInt & 0x000000000000FFFFL);
+    version = versionStream.str();
+    platformString = RTStringToString(versionInfo->DeviceFamily);
+
+    EasClientDeviceInformation deviceInfo;
+    manufacturer = RTStringToString(deviceInfo.SystemManufacturer);
+    modelName = RTStringToString(deviceInfo.SystemSku);
+    deviceName = WideString(deviceInfo.FriendlyName->Data());
+    gpu = GPUFamily();
+    uDID = RTStringToString(Windows::System::UserProfile::AdvertisingManager::AdvertisingId);
 }
 
-String DeviceInfo::GetManufacturer()
+DeviceInfo::ePlatform DeviceInfoPrivate::GetPlatform()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return "Not yet implemented";
+    return platform;
 }
 
-String DeviceInfo::GetModel()
+String DeviceInfoPrivate::GetPlatformString()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return "Not yet implemented";
+    return platformString;
 }
 
-String DeviceInfo::GetLocale()
+String DeviceInfoPrivate::GetVersion()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return "Not yet implemented";
+    return version;
 }
 
-String DeviceInfo::GetRegion()
+String DeviceInfoPrivate::GetManufacturer()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return "Not yet implemented";
+    return manufacturer;
 }
 
-String DeviceInfo::GetTimeZone()
+String DeviceInfoPrivate::GetModel()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return "Not yet implemented";
-}
-String DeviceInfo::GetHTTPProxyHost()
-{
-	return "Not yet implemented";
+    return modelName;
 }
 
-String DeviceInfo::GetHTTPNonProxyHosts()
+String DeviceInfoPrivate::GetLocale()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return "Not yet implemented";
+    return RTStringToString(GlobalizationPreferences::Languages->GetAt(0));
 }
 
-int DeviceInfo::GetHTTPProxyPort()
+String DeviceInfoPrivate::GetRegion()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-	return 0;
+    return RTStringToString(GlobalizationPreferences::HomeGeographicRegion);
 }
 
-String DeviceInfo::GetUDID()
+String DeviceInfoPrivate::GetTimeZone()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-        return "Not yet implemented";
+    Calendar calendar;
+    return RTStringToString(calendar.GetTimeZone());
 }
 
-WideString DeviceInfo::GetName()
+String DeviceInfoPrivate::GetHTTPProxyHost()
 {
-    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__
-    return L"Not yet implemented";
+    return "Not yet implemented";
 }
 
-eGPUFamily DeviceInfo::GetGPUFamily()
+String DeviceInfoPrivate::GetHTTPNonProxyHosts()
 {
-    return GPU_INVALID;
+    return "Not yet implemented";
 }
 
-DeviceInfo::NetworkInfo DeviceInfo::GetNetworkInfo()
+int DeviceInfoPrivate::GetHTTPProxyPort()
 {
-    // For now return default network info for Windows.
-    return NetworkInfo();
+    return 0;
 }
 
-void DeviceInfo::InitializeScreenInfo()
+DeviceInfo::ScreenInfo& DeviceInfoPrivate::GetScreenInfo()
 {
-	UpdateScreenInfo();
+    return screenInfo;
 }
 
-//TODO: dopilit'
-void DeviceInfo::UpdateScreenInfo()
+int DeviceInfoPrivate::GetZBufferSize()
 {
-	CoreWindow^ window = CoreWindow::GetForCurrentThread();
-	if (nullptr == window)
-		return;
+    return zBufferSize;
+}
 
-	screenInfo.width = static_cast<int32>(window->Bounds.Width);
-	screenInfo.height = static_cast<int32>(window->Bounds.Height);
+String DeviceInfoPrivate::GetUDID()
+{
+    return uDID;
+}
+
+WideString DeviceInfoPrivate::GetName()
+{
+    return deviceName;
+}
+
+eGPUFamily DeviceInfoPrivate::GetGPUFamily()
+{   
+    return gpu;
+}
+
+DeviceInfo::NetworkInfo DeviceInfoPrivate::GetNetworkInfo()
+{
+    DeviceInfo::NetworkInfo networkInfo;
+    ConnectionProfile^ icp = NetworkInformation::GetInternetConnectionProfile();
+    if (icp != nullptr && icp->NetworkAdapter != nullptr)
+    {
+        if (icp->IsWlanConnectionProfile)
+        {
+            networkInfo.networkType = DeviceInfo::NETWORK_TYPE_WIFI;
+        }
+        else if (icp->IsWwanConnectionProfile)
+        {
+            networkInfo.networkType = DeviceInfo::NETWORK_TYPE_CELLULAR;
+        }
+        else
+        {
+            // in other case Ethernet
+            networkInfo.networkType = DeviceInfo::NETWORK_TYPE_ETHERNET;
+        }
+    }
+    return networkInfo;
+}
+
+// temporary decision
+void DeviceInfoPrivate::InitializeScreenInfo()
+{
+    __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__MARKER__
+    
+    CorePlatformWinUAP* core = static_cast<CorePlatformWinUAP*>(Core::Instance());
+    DVASSERT(nullptr != core && "DeviceInfo::InitializeScreenInfo(): Core::Instance() is null");
+
+    auto func = [this]() {
+        // should be started on UI thread
+        CoreWindow ^ coreWindow = Window::Current->CoreWindow;
+        DVASSERT(coreWindow != nullptr);
+
+        screenInfo.width = static_cast<int32>(coreWindow->Bounds.Width);
+        screenInfo.height = static_cast<int32>(coreWindow->Bounds.Height);
+
+        DisplayInformation^ displayInfo = DisplayInformation::GetForCurrentView();
+        DVASSERT(displayInfo != nullptr);
+        screenInfo.scale = static_cast<float32>(displayInfo->RawPixelsPerViewPixel);
+        DisplayOrientations curOrientation = DisplayInformation::GetForCurrentView()->CurrentOrientation;
+        if (DisplayOrientations::Portrait == curOrientation || DisplayOrientations::PortraitFlipped == curOrientation)
+        {
+            std::swap(screenInfo.width, screenInfo.height);
+        }
+    };
+    core->RunOnUIThreadBlocked(func);
+    // start device watchers, after creation main thread dispatcher
+    if (!watchersCreated)
+    {
+        CreateAndStartHIDWatcher();
+        watchersCreated = true;
+    }
+}
+
+bool FillStorageSpaceInfo(DeviceInfo::StorageInfo& storage_info)
+{
+    ULARGE_INTEGER freeBytesAvailable;
+    ULARGE_INTEGER totalNumberOfBytes;
+    ULARGE_INTEGER totalNumberOfFreeBytes;
+
+    BOOL res = ::GetDiskFreeSpaceExA(storage_info.path.GetAbsolutePathname().c_str(),
+        &freeBytesAvailable, &totalNumberOfBytes, &totalNumberOfFreeBytes);
+
+    if (res == FALSE)
+        return false;
+
+    storage_info.totalSpace = totalNumberOfBytes.QuadPart;
+    storage_info.freeSpace = freeBytesAvailable.QuadPart;
+
+    return true;
+}
+
+List<DeviceInfo::StorageInfo> DeviceInfoPrivate::GetStoragesList()
+{
+    using namespace Windows::Storage;
+
+    List<DeviceInfo::StorageInfo> result;
+    FileSystem* fileSystem = FileSystem::Instance();
+
+    //information about internal storage
+    DeviceInfo::StorageInfo storage;
+    storage.path = fileSystem->GetUserDocumentsPath();
+    storage.type = DeviceInfo::STORAGE_TYPE_INTERNAL;
+    if (FillStorageSpaceInfo(storage))
+    {
+        result.push_back(storage);
+    }
+
+    //information about removable storages
+    storage.type = DeviceInfo::STORAGE_TYPE_PRIMARY_EXTERNAL;
+    storage.removable = true;
+
+    auto removableStorages = WaitAsync(KnownFolders::RemovableDevices->GetFoldersAsync());
+    for (unsigned i = 0; i < removableStorages->Size; ++i)
+    {
+        Platform::String^ path = removableStorages->GetAt(i)->Path;
+        storage.path = FilePath::FromNativeString(path->Data());
+        if (FillStorageSpaceInfo(storage))
+        {
+            result.push_back(storage);
+            //all subsequent external storages are secondary
+            storage.type = DeviceInfo::STORAGE_TYPE_SECONDARY_EXTERNAL;
+        }
+    }
+
+    return result;
+}
+
+bool DeviceInfoPrivate::IsHIDConnected(DeviceInfo::eHIDType type)
+{
+    auto func = [type](HIDConvPair pair)->bool {
+        return pair.second == type;
+    };
+    auto it = std::find_if(HidConvSet.begin(), HidConvSet.end(), func);
+    return IsEnabled(it->first);
+}
+
+bool DeviceInfoPrivate::IsTouchPresented()
+{
+    return isTouchPresent; //  Touch is always present in MSVS simulator
+}
+
+void DeviceInfoPrivate::NotifyAllClients(NativeHIDType type, bool isConnected)
+{
+    auto func = [type](HIDConvPair pair)->bool {
+        return pair.first == type;
+    };
+    DeviceInfo::eHIDType hidType = std::find_if(HidConvSet.begin(), HidConvSet.end(), func)->second;
+
+    //pass notification in main thread
+    CorePlatformWinUAP* core = static_cast<CorePlatformWinUAP*>(Core::Instance());
+
+    DeviceInfo::HIDConnectionSignal* signal = &GetHIDConnectionSignal(hidType);
+    core->RunOnMainThread([=] { signal->Emit(hidType, isConnected); });
+}
+
+eGPUFamily DeviceInfoPrivate::GPUFamily()
+{
+    return GPU_DX11;
+}
+
+DeviceWatcher^ DeviceInfoPrivate::CreateDeviceWatcher(NativeHIDType type)
+{
+    hids.GetAccessor()->emplace(type, Set<String>());
+    DeviceWatcher^ watcher = nullptr;
+    Platform::Collections::Vector<Platform::String^>^ requestedProperties = ref new Platform::Collections::Vector<Platform::String^>();
+    requestedProperties->Append("System.Devices.InterfaceClassGuid");
+    requestedProperties->Append("System.ItemNameDisplay");
+    if (MOUSE == type)
+    {
+        watcher = DeviceInformation::CreateWatcher(ref new Platform::String(GUID_DEVINTERFACE_MOUSE), requestedProperties);
+    }
+    else if (KEYBOARD == type)
+    {
+        watcher = DeviceInformation::CreateWatcher(ref new Platform::String(GUID_DEVINTERFACE_KEYBOARD), requestedProperties);
+    }
+    else if (TOUCH == type)
+    {
+        watcher = DeviceInformation::CreateWatcher(ref new Platform::String(GUID_DEVINTERFACE_TOUCH), requestedProperties);
+    }
+    else
+    {
+        watcher = DeviceInformation::CreateWatcher(HidDevice::GetDeviceSelector(USAGE_PAGE, type));
+    }
+    auto added = ref new TypedEventHandler<DeviceWatcher^, DeviceInformation^>([this, type](DeviceWatcher^ watcher, DeviceInformation^ information) {
+        OnDeviceAdded(type, information);
+    });
+    auto removed = ref new TypedEventHandler<DeviceWatcher^ , DeviceInformationUpdate^>([this, type](DeviceWatcher^ watcher, DeviceInformationUpdate^ information) {
+        OnDeviceRemoved(type, information);
+    });
+    auto updated = ref new TypedEventHandler<DeviceWatcher ^, DeviceInformationUpdate ^>([this, type](DeviceWatcher ^ watcher, DeviceInformationUpdate ^ information) {
+        OnDeviceUpdated(type, information);
+    });
+    if (TOUCH != type)
+    {
+        watcher->Added += added;
+        watcher->Removed += removed;
+    }
+    watcher->Updated += updated;
+    watcher->Start();
+    return watcher;
+}
+
+void DeviceInfoPrivate::CreateAndStartHIDWatcher()
+{
+    watchers.emplace_back(CreateDeviceWatcher(POINTER));
+    watchers.emplace_back(CreateDeviceWatcher(MOUSE));
+    watchers.emplace_back(CreateDeviceWatcher(JOYSTICK));
+    watchers.emplace_back(CreateDeviceWatcher(GAMEPAD));
+    watchers.emplace_back(CreateDeviceWatcher(KEYBOARD));
+    watchers.emplace_back(CreateDeviceWatcher(KEYPAD));
+    watchers.emplace_back(CreateDeviceWatcher(SYSTEM_CONTROL));
+    watchers.emplace_back(CreateDeviceWatcher(TOUCH));
+}
+
+void DeviceInfoPrivate::OnDeviceAdded(NativeHIDType type, DeviceInformation^ information)
+{
+    if (!information->IsEnabled)
+    {
+        return;
+    }
+    //TODO: delete it, kostil for surface mouse
+    if (MOUSE == type)
+    {
+        if (wcsstr(information->Id->Data(), KOSTIL_SURFACE_MOUSE) != nullptr)
+        {
+            return;
+        }
+    }
+    //TODO: delete it, kostil for surface keyboard
+    if (KEYBOARD == type)
+    {
+        if (wcsstr(information->Id->Data(), KOSTIL_SURFACE_KEYBOARD) != nullptr)
+        {
+            return;
+        }
+    }
+    auto hidsAccessor(hids.GetAccessor());
+    String id = RTStringToString(information->Id);
+    Set<String>& setIdDevices = (*(hidsAccessor))[type];
+    auto idIter = setIdDevices.find(id);
+    if (idIter == setIdDevices.end())
+    {
+        setIdDevices.emplace(std::move(id));
+        NotifyAllClients(type, true);
+    }
+}
+
+void DeviceInfoPrivate::OnDeviceRemoved(NativeHIDType type, DeviceInformationUpdate^ information)
+{
+    String id = RTStringToString(information->Id);
+    auto hidsAccessor(hids.GetAccessor());
+    Set<String>& setIdDevices = (*(hidsAccessor))[type];
+    auto idIter = setIdDevices.find(id);
+    if (idIter != setIdDevices.end())
+    {
+        setIdDevices.erase(idIter);
+        NotifyAllClients(type, false);
+    }
+}
+
+void DeviceInfoPrivate::OnDeviceUpdated(NativeHIDType type, DeviceInformationUpdate ^ information)
+{
+    auto hidsAccessor(hids.GetAccessor());
+    Set<String>& setIdDevices = (*(hidsAccessor))[type];
+    if (TOUCH == type)
+    {
+        TouchCapabilities touchCapabilities;
+        bool newState = (1 == touchCapabilities.TouchPresent);
+        if (isTouchPresent != newState)
+        {
+            isTouchPresent = newState;
+            if (isTouchPresent)
+            {
+                setIdDevices.emplace(DEFAULT_TOUCH_ID);
+            }
+            else
+            {
+                setIdDevices.erase(DEFAULT_TOUCH_ID);
+            }
+            NotifyAllClients(type, isTouchPresent);
+        }
+    }
+    else
+    {
+        bool isEnabled = false;
+        Windows::Foundation::Collections::IMapView<Platform::String ^, Platform::Object ^> ^ properties = information->Properties;
+        if (properties->HasKey(L"System.Devices.InterfaceEnabled"))
+        {
+            try
+            {
+                isEnabled = safe_cast<bool>(properties->Lookup(L"System.Devices.InterfaceEnabled"));
+            }
+            catch (Platform::InvalidCastException^ e)
+            {
+                Logger::FrameworkDebug("DeviceInfoPrivate::OnDeviceUpdated. Can't cast System.Devices.InterfaceEnabled.");
+            }
+            catch (Platform::OutOfBoundsException^ e)
+            {
+                Logger::FrameworkDebug("DeviceInfoPrivate::OnDeviceUpdated. OutOfBoundsException.");
+            }
+        }
+        String id = RTStringToString(information->Id);
+        auto iterId = setIdDevices.find(id);
+        if (isEnabled)
+        {
+            if (iterId == setIdDevices.end())
+            {
+                setIdDevices.emplace(std::move(id));
+                NotifyAllClients(type, isEnabled);
+            }
+        }
+        else
+        {
+            if (iterId != setIdDevices.end())
+            {
+                setIdDevices.erase(id);
+                NotifyAllClients(type, isEnabled);
+            }
+        }
+    }
+}
+
+bool DeviceInfoPrivate::IsEnabled(NativeHIDType type)
+{
+    auto hidsAccessor(hids.GetAccessor());
+    Set<String>& setIdDevices = (*(hidsAccessor))[type];
+    return (setIdDevices.size() > 0);
 }
 
 }

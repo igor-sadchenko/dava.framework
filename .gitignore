@@ -8,6 +8,7 @@ build/     # ignore all files in the build/ directory
 _build/    # ignore all files in the _build/ directory
 cmake_build/
 cmake_repo/
+cmake_prebuilt/
 xcuserdata/
 /xcuserdata
 /xcuserdata/
@@ -55,8 +56,9 @@ AppPackages
 !/Libs/lib_CMake/win10/arm/Release
 !/Libs/lib_CMake/win10/x64/Debug
 !/Libs/lib_CMake/win10/x64/Release
-!/Libs/lib_CMake/win10/x86/Debug
-!/Libs/lib_CMake/win10/x86/Release
+!/Libs/lib_CMake/win10/Win32/Debug
+!/Libs/lib_CMake/win10/Win32/Release
+!/Sources/Internal/Debug
 Projects/TestBed/android/assets/
 Projects/TestBed/android/obj/
 Projects/TestBed/android/bin/

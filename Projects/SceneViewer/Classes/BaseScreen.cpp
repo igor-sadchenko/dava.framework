@@ -33,25 +33,50 @@ int32 BaseScreen::screensCount = 0;
 
 BaseScreen::BaseScreen()
     : UIScreen()
-    , font(NULL)
+    , font(nullptr)
     , screenID(screensCount++)
+    , loaded(false)
 {
     UIScreenManager::Instance()->RegisterScreen(screenID, this);
 }
 
+bool BaseScreen::SystemInput(UIEvent *currentInput)
+{
+    if ((currentInput->tid == DVKEY_BACK) && (UIEvent::Phase::KEY_DOWN == currentInput->phase))
+    {
+        SetPreviousScreen();
+    }
+    else
+    {
+        return UIScreen::SystemInput(currentInput);
+    }
+    return true;
+}
+
+void BaseScreen::SystemScreenSizeDidChanged(const Rect &newFullScreenSize)
+{
+    UnloadResources();
+    LoadResources();
+}
+
 void BaseScreen::LoadResources()
 {
-	GetBackground()->SetColor(Color(0.f, 0.f, 0.f, 1.f));
+    if (!loaded)
+    {
+        GetBackground()->SetColor(Color(0.f, 0.f, 0.f, 1.f));
+        DVASSERT(font == NULL);
+        font = FTFont::Create("~res:/Fonts/korinna.ttf");
+        font->SetSize(20.f);
 
-    DVASSERT(font == NULL);
-    font = FTFont::Create("~res:/Fonts/korinna.ttf");
-    font->SetSize(20.f);
+        loaded = true;
+    }
 }
 
 void BaseScreen::UnloadResources()
 {
     SafeRelease(font);
 	RemoveAllControls();
+    loaded = false;
 }
 
 UIButton * BaseScreen::CreateButton(const Rect &rect, const WideString & text)

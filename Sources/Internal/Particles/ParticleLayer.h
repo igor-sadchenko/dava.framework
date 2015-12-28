@@ -104,48 +104,47 @@ struct ParticleLayer : public BaseObject
 
 	bool IsLodActive(int32 lod);	
 	void SetLodActive(int32 lod, bool active);
-	
-	Sprite 			* sprite;
-	void SetSprite(Sprite * sprite);
-	Vector2		layerPivotPoint;
-	Vector2		layerPivotSizeOffsets; //precached for faster bbox computation
-	void SetPivotPoint(Vector2 pivot);
 
-	FilePath		spritePath;		
-	bool isLooped;
-	bool isLong;
-	eBlendMode srcBlendFactor, dstBlendFactor;
-	bool enableFog;
-	bool enableFrameBlend;
-	bool inheritPosition;  //for super emitter - if true the whole emitter would be moved, otherwise just emission point	
-	
-	bool isDisabled;	
+    ScopedPtr<Sprite> sprite;
+    void SetSprite(const FilePath& spritePath);
+    Vector2 layerPivotPoint;
+    Vector2 layerPivotSizeOffsets; //precached for faster bbox computation
+    void SetPivotPoint(Vector2 pivot);
 
-	
-	Vector<bool> activeLODS;		
+    FilePath spritePath;
+    bool isLooped;
+    bool isLong;
+    eBlending blending;
+    bool enableFog;
+    bool enableFrameBlend;
+    bool inheritPosition; //for super emitter - if true the whole emitter would be moved, otherwise just emission point
 
-	String			layerName;
+    bool isDisabled;
 
-	/*
+    Vector<bool> activeLODS;
+
+    String layerName;
+
+    /*
 	 Properties of particle layer that describe particle system logic
 	 */
-	RefPtr< PropertyLine<float32> > life;				// in seconds
-	RefPtr< PropertyLine<float32> > lifeVariation;		// variation part of life that added to particle life during generation of the particle
-	
-	RefPtr< PropertyLine<float32> > number;				// number of particles per second
-	RefPtr< PropertyLine<float32> > numberVariation;	// variation part of number that added to particle count during generation of the particle
-	
-	RefPtr< PropertyLine<Vector2> > size;				// size of particles in pixels 
-	RefPtr< PropertyLine<Vector2> > sizeVariation;		// size variation in pixels
-	RefPtr< PropertyLine<Vector2> > sizeOverLifeXY;	
-	
-	RefPtr< PropertyLine<float32> > velocity;			// velocity in pixels
-	RefPtr< PropertyLine<float32> > velocityVariation;	
-	RefPtr< PropertyLine<float32> > velocityOverLife;
-	
-	Vector<ParticleForce*> forces;
-	
-	RefPtr< PropertyLine<float32> > spin;				// spin of angle / second
+    RefPtr<PropertyLine<float32>> life; // in seconds
+    RefPtr<PropertyLine<float32>> lifeVariation; // variation part of life that added to particle life during generation of the particle
+
+    RefPtr<PropertyLine<float32>> number; // number of particles per second
+    RefPtr<PropertyLine<float32>> numberVariation; // variation part of number that added to particle count during generation of the particle
+
+    RefPtr<PropertyLine<Vector2>> size; // size of particles in pixels
+    RefPtr<PropertyLine<Vector2>> sizeVariation; // size variation in pixels
+    RefPtr<PropertyLine<Vector2>> sizeOverLifeXY;
+
+    RefPtr<PropertyLine<float32>> velocity; // velocity in pixels
+    RefPtr<PropertyLine<float32>> velocityVariation;
+    RefPtr<PropertyLine<float32>> velocityOverLife;
+
+    Vector<ParticleForce*> forces;
+
+    RefPtr< PropertyLine<float32> > spin;				// spin of angle / second
 	RefPtr< PropertyLine<float32> > spinVariation;
 	RefPtr< PropertyLine<float32> > spinOverLife;
 	bool randomSpinDirection;
@@ -195,10 +194,10 @@ private:
 		eType layerType;
 		String layerTypeName;
 	};
-	static const LayerTypeNamesInfo layerTypeNamesInfoMap[];
+    static const LayerTypeNamesInfo layerTypeNamesInfoMap[];
 
-	void FillSizeOverlifeXY(RefPtr< PropertyLine<float32> > sizeOverLife);
-	void UpdateSizeLine(PropertyLine<Vector2> *line, bool rescaleSize, bool swapXY); //conversion from old format
+    void FillSizeOverlifeXY(RefPtr<PropertyLine<float32>> sizeOverLife);
+    void UpdateSizeLine(PropertyLine<Vector2>* line, bool rescaleSize, bool swapXY); //conversion from old format
 };
 }
 

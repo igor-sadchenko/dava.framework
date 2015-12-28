@@ -44,7 +44,7 @@ EnumPropertyDelegate::~EnumPropertyDelegate()
 {
 }
 
-QWidget * EnumPropertyDelegate::createEditor( QWidget * parent, const QStyleOptionViewItem & option, const QModelIndex & index ) const
+QWidget* EnumPropertyDelegate::createEditor(QWidget* parent, const QStyleOptionViewItem& option, const QModelIndex& index)
 {
     QComboBox *comboBox = new QComboBox(parent);
     comboBox->setObjectName(QString::fromUtf8("comboBox"));
@@ -74,10 +74,10 @@ void EnumPropertyDelegate::setEditorData( QWidget * editor, const QModelIndex & 
 {
     QComboBox *comboBox = editor->findChild<QComboBox *>("comboBox");
 
-    editor->blockSignals(true);
+    comboBox->blockSignals(true);
     int comboIndex = comboBox->findText(index.data(Qt::DisplayRole).toString());
     comboBox->setCurrentIndex(comboIndex);
-    editor->blockSignals(false);
+    comboBox->blockSignals(false);
 
     BasePropertyDelegate::SetValueModified(editor, false);
 }
@@ -88,7 +88,6 @@ bool EnumPropertyDelegate::setModelData( QWidget * editor, QAbstractItemModel * 
         return true;
 
     QComboBox *comboBox = editor->findChild<QComboBox *>("comboBox");
-
     return model->setData(index, comboBox->itemData(comboBox->currentIndex()), Qt::EditRole);
 }
 

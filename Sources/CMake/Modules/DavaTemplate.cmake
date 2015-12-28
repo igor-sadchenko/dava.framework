@@ -12,14 +12,13 @@
 #set( WIN32_RESOURCES )
 #
 #set( ANDROID_USE_STANDART_TEMLATE )
-#set( ANDROID_DATA_FOLDER          )
 #set( ANDROID_PACKAGE              )
 #set( ANDROID_APP_NAME             )
 #set( ANDROID_ACTIVITY_APP_NAME    )
 #set( ANDROID_JAVA_SRC             )
 #set( ANDROID_JAVA_LIBS            )
 #set( ANDROID_JAVA_RES             )
-#set( ANDROID_JAVA_ASSET           ) 
+#set( ANDROID_JAVA_ASSET           )
 #set( ANDROID_ICO                  )
 #
 #set( ADDED_SRC                  )
@@ -44,6 +43,10 @@ if( WIN32 )
     add_definitions ( -D_CRT_SECURE_NO_DEPRECATE )
 endif()
 
+if( DAVA_DISABLE_AUTOTESTS )
+    add_definitions ( -DDISABLE_AUTOTESTS )
+endif()
+
 if( MACOS_DATA )
     set( APP_DATA ${MACOS_DATA} )
 
@@ -60,27 +63,33 @@ endif()
 
 if( ANDROID )
     if( NOT ANDROID_JAVA_SRC )
-        list( APPEND ANDROID_JAVA_SRC  ${CMAKE_CURRENT_LIST_DIR}/android/src )    
+        list( APPEND ANDROID_JAVA_SRC  ${CMAKE_CURRENT_LIST_DIR}/android/src )
     endif()
 
     if( NOT ANDROID_JAVA_RES )
-        set( ANDROID_JAVA_RES  ${CMAKE_CURRENT_LIST_DIR}/android/res )    
+        set( ANDROID_JAVA_RES  ${CMAKE_CURRENT_LIST_DIR}/android/res )
 
     endif()
 
 endif()
 
+if( DAVA_TOOLS_FOUND )
+    include_directories( ${DAVA_TOOLS_DIR} )
+    list ( APPEND LIBRARIES ${DAVA_TOOLS_LIBRARY} )
+
+endif()
+
 if( DAVA_FOUND )
-    include_directories   ( ${DAVA_INCLUDE_DIR} ) 
+    include_directories   ( ${DAVA_INCLUDE_DIR} )
     include_directories   ( ${DAVA_THIRD_PARTY_INCLUDES_PATH} )
 
     list( APPEND ANDROID_JAVA_LIBS  ${DAVA_THIRD_PARTY_ROOT_PATH}/lib_CMake/android/jar )
     list( APPEND ANDROID_JAVA_SRC   ${DAVA_ENGINE_DIR}/Platform/TemplateAndroid/Java )
 
 endif()
- 
+
 if( IOS )
-    list( APPEND RESOURCES_LIST ${APP_DATA} )    
+    list( APPEND RESOURCES_LIST ${APP_DATA} )
     list( APPEND RESOURCES_LIST ${IOS_XIB} )
     list( APPEND RESOURCES_LIST ${IOS_PLIST} )
     list( APPEND RESOURCES_LIST ${IOS_ICO} )
@@ -92,11 +101,11 @@ elseif( MACOS )
 
     set_source_files_properties( ${DYLIB_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources )
 
-    list ( APPEND DYLIB_FILES     "${DYLIB_FILES}" "${MACOS_DYLIB}" )  
+    list ( APPEND DYLIB_FILES     "${DYLIB_FILES}" "${MACOS_DYLIB}" )
 
     list( APPEND RESOURCES_LIST  ${APP_DATA}  )
-    list( APPEND RESOURCES_LIST  ${DYLIB_FILES} ) 
-    list( APPEND RESOURCES_LIST  ${MACOS_XIB}   )    
+    list( APPEND RESOURCES_LIST  ${DYLIB_FILES} )
+    list( APPEND RESOURCES_LIST  ${MACOS_XIB}   )
     list( APPEND RESOURCES_LIST  ${MACOS_PLIST} )
     list( APPEND RESOURCES_LIST  ${MACOS_ICO}   )
 
@@ -104,71 +113,81 @@ elseif( MACOS )
 
 elseif ( WINDOWS_UAP )
 
-	if(MSVC_VERSION GREATER 1899)
-		set(COMPILER_VERSION "14")
-	elseif(MSVC_VERSION GREATER 1700)
-		set(COMPILER_VERSION "12")
-	endif()
-	
-	set (APP_MANIFEST_NAME Package.appxmanifest)
-	set (APP_TEMPKEY_NAME "${PROJECT_NAME}_TemporaryKey.pfx" )
-	
-	if("${CMAKE_SYSTEM_NAME}" STREQUAL "WindowsPhone")
-		set(PLATFORM WP)
-		add_definitions("-DPHONE")
-		if("${CMAKE_SYSTEM_VERSION}" STREQUAL "8.0")
-			set(APP_MANIFEST_NAME WMAppManifest.xml)
-			set(WINDOWS_PHONE8 1)
-		endif()
-	elseif("${CMAKE_SYSTEM_NAME}" STREQUAL "WindowsStore")
-		set(PLATFORM STORE)
-	else()
-		set(PLATFORM DESKTOP)
-		message(FATAL_ERROR "This app supports Store / Phone only. Please edit the target platform.")
-	endif()
-	
-	set(SHORT_NAME ${PROJECT_NAME})
-	set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-	set(PACKAGE_GUID "${WINDOWS_UAP_APPLICATION_GUID}")
-	
-	set ( WIN_UAP_CONF_DIR      "${CMAKE_MODULE_PATH}../Resources/WindowsStore" )
-	set ( WIN_UAP_MANIFESTS_DIR "${WIN_UAP_CONF_DIR}/Manifests" )
-	set ( WIN_UAP_ASSETS_DIR    "${WIN_UAP_CONF_DIR}/Assets" )
-	file( GLOB ASSET_FILES      "${WIN_UAP_ASSETS_DIR}/*.png" )
-	
-	if (NOT "${PLATFORM}" STREQUAL "DESKTOP")
-		configure_file(
-			${WIN_UAP_MANIFESTS_DIR}/Package_vc${COMPILER_VERSION}.${PLATFORM}.appxmanifest.in
-			${CMAKE_CURRENT_BINARY_DIR}/${APP_MANIFEST_NAME}
-			@ONLY)
-			
-		configure_file(
-			${WIN_UAP_CONF_DIR}/TemporaryKey.pfx
-			${CMAKE_CURRENT_BINARY_DIR}/${APP_TEMPKEY_NAME}
-			@ONLY)
-	endif()
-	
-	if (WINDOWS_PHONE8)
-	    file( GLOB PHONE_RESOURCES "${WIN_UAP_ASSETS_DIR}/Tiles/*.png" )
-		set( PHONE_RESOURCES "${PHONE_RESOURCES} ${ASSET_FILES}" )
-		
-		# Windows Phone 8.0 needs to copy all the images.
-	    # It doesn't know to use relative paths.
-		file( COPY ${PHONE_RESOURCES} DESTINATION ${CMAKE_CURRENT_BINARY_DIR} )
-		
-		set ( PHONE_RESOURCES "${PHONE_RESOURCES} ${CMAKE_CURRENT_BINARY_DIR}/${APP_MANIFEST_NAME}" )
-		set ( CONTENT_FILES "${CONTENT_FILES} ${PHONE_RESOURCES}" )
+    if ( NOT "${CMAKE_SYSTEM_NAME}" STREQUAL "WindowsStore" )
+        message(FATAL_ERROR "This app supports Store / Phone only. Please check the target platform.")
+    endif ()
 
-	elseif (NOT "${PLATFORM}" STREQUAL "DESKTOP")
-	    set(CONTENT_FILES ${CONTENT_FILES}
-		    ${CMAKE_CURRENT_BINARY_DIR}/${APP_MANIFEST_NAME} 
-		)
-	endif()
-	
-	set(RESOURCE_FILES
-		${CONTENT_FILES} ${DEBUG_CONTENT_FILES} ${RELEASE_CONTENT_FILES} ${ASSET_FILES} ${STRING_FILES} )
-	
-	list( APPEND RESOURCES_LIST ${RESOURCE_FILES} )
+    set ( WINDOWS_UAP_CONFIG_DIR "${DAVA_ROOT_DIR}/Sources/CMake/ConfigureFiles" )
+
+    #loading config file
+    if ( NOT WINDOWS_UAP_CONFIG_FILE )
+        set ( WINDOWS_UAP_CONFIG_FILE "${WINDOWS_UAP_CONFIG_DIR}/UWPConfigTemplate.in" )
+    endif ()
+    configure_file( ${WINDOWS_UAP_CONFIG_FILE} ${CMAKE_CURRENT_BINARY_DIR}/UWPConfig.in )
+    load_config ( ${CMAKE_CURRENT_BINARY_DIR}/UWPConfig.in )
+    
+    #package languages settings
+    #TODO: remove default value setting for this variable after supporting of this feature by client
+    if ( NOT WINDOWS_UAP_PACKAGE_LANGUAGES )
+        set ( WINDOWS_UAP_PACKAGE_LANGUAGES "x-generate" )
+    else ()
+        string ( REPLACE "|" ";" WINDOWS_UAP_PACKAGE_LANGUAGES ${WINDOWS_UAP_PACKAGE_LANGUAGES} )
+    endif ()
+    
+    #build xml tags list
+    set ( WINDOWS_UAP_PACKAGE_LANGUAGES_XML_TAGS "\n" )
+    foreach ( LANGUAGE ${WINDOWS_UAP_PACKAGE_LANGUAGES} )
+        set ( WINDOWS_UAP_PACKAGE_LANGUAGES_XML_TAGS 
+              "${WINDOWS_UAP_PACKAGE_LANGUAGES_XML_TAGS}  <qualifier name=\"Language\" value=\"${LANGUAGE}\" />\n" )
+    endforeach ()
+
+    set ( APP_MANIFEST_NAME "Package.appxmanifest" )
+    set ( APP_CERT_NAME "${PROJECT_NAME}_Key.pfx" )
+    set ( SHORT_NAME ${PROJECT_NAME} )
+    set_property ( GLOBAL PROPERTY USE_FOLDERS ON )
+
+    #search assets
+    file( GLOB ASSET_FILES "${WINDOWS_UAP_ASSETS_DIR}/*.png" )
+    source_group ( "Content\\Assets" FILES ${ASSET_FILES} )
+
+    #copy manifest
+    configure_file ( ${WINDOWS_UAP_MANIFEST_FILE} ${CMAKE_CURRENT_BINARY_DIR}/${APP_MANIFEST_NAME} @ONLY )
+
+    #copy key file
+    get_filename_component ( CERT_NAME ${WINDOWS_UAP_CERTIFICATE_FILE} NAME )
+    file ( COPY ${WINDOWS_UAP_CERTIFICATE_FILE} DESTINATION ${CMAKE_CURRENT_BINARY_DIR} )
+    file ( RENAME ${CMAKE_CURRENT_BINARY_DIR}/${CERT_NAME} ${CMAKE_CURRENT_BINARY_DIR}/${APP_CERT_NAME} )
+
+    #copy priconfig files
+    configure_file ( "${WINDOWS_UAP_CONFIG_DIR}/UWPPriConfigDefault.xml" "${CMAKE_CURRENT_BINARY_DIR}/UWPPriConfigDefault.xml" )
+    file ( COPY "${WINDOWS_UAP_CONFIG_DIR}/UWPPriConfigPackaging.xml" DESTINATION ${CMAKE_CURRENT_BINARY_DIR} )
+
+    set(CONTENT_FILES ${CONTENT_FILES}
+        ${CMAKE_CURRENT_BINARY_DIR}/${APP_MANIFEST_NAME} )
+
+    set(RESOURCE_FILES ${CONTENT_FILES} ${DEBUG_CONTENT_FILES} ${RELEASE_CONTENT_FILES}
+        ${ASSET_FILES} ${STRING_FILES} ${CMAKE_CURRENT_BINARY_DIR}/${APP_CERT_NAME} )
+    list( APPEND RESOURCES_LIST ${RESOURCE_FILES} )
+
+    #add dll's to project and package
+    add_dynamic_libs_win_uap ( ${DAVA_WIN_UAP_LIBRARIES_PATH_COMMON} DAVA_DLL_LIST )
+
+    #add found dll's to project and mark them as deployment content
+    if ( DAVA_DLL_LIST_DEBUG )
+        set ( NEED_DLL_FIX true )
+        source_group ("Binaries\\Debug"   FILES ${DAVA_DLL_LIST_DEBUG})
+        set_property(SOURCE ${DAVA_DLL_LIST_DEBUG} PROPERTY VS_DEPLOYMENT_CONTENT $<CONFIG:Debug>)
+    endif ()
+
+    if ( DAVA_DLL_LIST_RELEASE )
+        set ( NEED_DLL_FIX true )
+        source_group ("Binaries\\Release" FILES ${DAVA_DLL_LIST_RELEASE})
+        set_property(SOURCE ${DAVA_DLL_LIST_RELEASE} PROPERTY
+            VS_DEPLOYMENT_CONTENT $<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>)
+    endif ()
+    
+    list( APPEND ADDED_SRC "${DAVA_DLL_LIST_DEBUG}"
+                           "${DAVA_DLL_LIST_RELEASE}" )
 
 	set_property(SOURCE ${CONTENT_FILES} PROPERTY VS_DEPLOYMENT_CONTENT 1)
 	set_property(SOURCE ${ASSET_FILES} PROPERTY VS_DEPLOYMENT_CONTENT 1)
@@ -178,19 +197,16 @@ elseif ( WINDOWS_UAP )
 	set_property(SOURCE ${RELEASE_CONTENT_FILES} PROPERTY
 		VS_DEPLOYMENT_CONTENT $<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>)
 
+	set ( UAP_DEPLOYMENT_CONTENT ${APP_DATA} )
+	list ( APPEND UAP_DEPLOYMENT_CONTENT ${ADDITIONAL_CONTENT} )
+	add_content_win_uap ( "${UAP_DEPLOYMENT_CONTENT}" )
+	list( APPEND ADDED_SRC ${ADDED_CONTENT_SRC} )
+
 elseif( WIN32 )
     list( APPEND RESOURCES_LIST  ${WIN32_RESOURCES} )
 endif()
 
 ###
-
-if( QT4_FOUND )
-    set( QT_PREFIX "Qt4")	
-
-elseif( QT5_FOUND )
-    set( QT_PREFIX "Qt5")	
-
-endif()
 
 if( DAVA_FOUND )
     if( ANDROID )
@@ -203,26 +219,26 @@ if( DAVA_FOUND )
 
     endif()
 
-    if( QT_PREFIX )
+    if( QT5_FOUND )
         if( WIN32 )
-            set ( PLATFORM_INCLUDES_DIR ${DAVA_PLATFORM_SRC}/${QT_PREFIX} ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/Win32 )
-            list( APPEND PATTERNS_CPP   ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/*.cpp ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/Win32/*.cpp )
-            list( APPEND PATTERNS_H     ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/*.h   ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/Win32/*.h   )        
+            set ( PLATFORM_INCLUDES_DIR ${DAVA_PLATFORM_SRC}/Qt5 ${DAVA_PLATFORM_SRC}/Qt5/Win32 )
+            list( APPEND PATTERNS_CPP   ${DAVA_PLATFORM_SRC}/Qt5/*.cpp ${DAVA_PLATFORM_SRC}/Qt5/Win32/*.cpp )
+            list( APPEND PATTERNS_H     ${DAVA_PLATFORM_SRC}/Qt5/*.h   ${DAVA_PLATFORM_SRC}/Qt5/Win32/*.h   )
 
         elseif( MACOS )
-            set ( PLATFORM_INCLUDES_DIR  ${DAVA_PLATFORM_SRC}/${QT_PREFIX}  ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/MacOS )
-            list( APPEND PATTERNS_CPP    ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/*.cpp ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/MacOS/*.cpp ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/MacOS/*.mm )
-            list( APPEND PATTERNS_H      ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/*.h   ${DAVA_PLATFORM_SRC}/${QT_PREFIX}/MacOS/*.h   )        
-
+            set ( PLATFORM_INCLUDES_DIR  ${DAVA_PLATFORM_SRC}/Qt5  ${DAVA_PLATFORM_SRC}/Qt5/MacOS )
+            list( APPEND PATTERNS_CPP    ${DAVA_PLATFORM_SRC}/Qt5/*.cpp ${DAVA_PLATFORM_SRC}/Qt5/MacOS/*.cpp ${DAVA_PLATFORM_SRC}/Qt5/MacOS/*.mm )
+            list( APPEND PATTERNS_H      ${DAVA_PLATFORM_SRC}/Qt5/*.h   ${DAVA_PLATFORM_SRC}/Qt5/MacOS/*.h   )
+            list( APPEND UNIFIED_IGNORE_LIST_APPLE "Qt5/MacOS/CoreMacOSPlatformQt.cpp" )
         endif()
-     
+
         include_directories( ${PLATFORM_INCLUDES_DIR} )
 
     else()
         if( WIN32 )
-            add_definitions        ( -D_UNICODE 
+            add_definitions        ( -D_UNICODE
                                      -DUNICODE )
-            list( APPEND ADDED_SRC  ${DAVA_PLATFORM_SRC}/TemplateWin32/CorePlatformWin32.cpp 
+            list( APPEND ADDED_SRC  ${DAVA_PLATFORM_SRC}/TemplateWin32/CorePlatformWin32.cpp
                                     ${DAVA_PLATFORM_SRC}/TemplateWin32/CorePlatformWin32.h  )
 
         endif()
@@ -236,6 +252,12 @@ if( DAVA_FOUND )
 endif()
 
 ###
+
+list( APPEND PROJECT_SOURCE_FILES ${ADDED_SRC} ${PLATFORM_ADDED_SRC} )
+generated_unity_sources( PROJECT_SOURCE_FILES   IGNORE_LIST ${UNIFIED_IGNORE_LIST} 
+                                                IGNORE_LIST_WIN32 ${UNIFIED_IGNORE_LIST_WIN32} 
+                                                IGNORE_LIST_APPLE ${UNIFIED_IGNORE_LIST_APPLE}
+                                               )
 
 if( ANDROID )
     set( POSTFIX 0  )
@@ -253,49 +275,50 @@ if( ANDROID )
             if( ${COUNTER} GREATER ${DAVA_ANDROID_MAX_LIB_SRC} )
                 math( EXPR POSTFIX "${POSTFIX} + 1" )
 
-                set( LIB_NAME "${PROJECT_NAME}_${POSTFIX}"  ) 
+                set( LIB_NAME "${PROJECT_NAME}_${POSTFIX}"  )
                 add_library( ${LIB_NAME} STATIC ${SRC_LIST} )
                 list( APPEND TARGET_LIBRARIES ${LIB_NAME} )
 
                 set( COUNTER 0 )
                 set( SRC_LIST )
 
-            endif() 
+            endif()
 
         else()
             list( APPEND REMAINING_LIST  ${ITEM} )
 
-        endif() 
+        endif()
 
     endforeach()
 
     if( ${COUNTER} GREATER 0 )
         math( EXPR POSTFIX "${POSTFIX} + 1" )
 
-        set( LIB_NAME "${PROJECT_NAME}_${POSTFIX}"  ) 
+        set( LIB_NAME "${PROJECT_NAME}_${POSTFIX}"  )
         add_library( ${LIB_NAME} STATIC ${SRC_LIST} )
         list( APPEND TARGET_LIBRARIES ${LIB_NAME} )
 
         set( COUNTER 0 )
         set( SRC_LIST )
 
-    endif() 
+    endif()
 
-    add_library( ${PROJECT_NAME} SHARED ${PLATFORM_ADDED_SRC} ${ADDED_SRC} ${REMAINING_LIST} )
+    add_library( ${PROJECT_NAME} SHARED ${PLATFORM_ADDED_SRC} ${REMAINING_LIST} )
 
-else()                             
-    add_executable( ${PROJECT_NAME} MACOSX_BUNDLE ${EXECUTABLE_FLAG}
-        ${ADDED_SRC}
-        ${PLATFORM_ADDED_SRC}
-        ${PROJECT_SOURCE_FILES} 
+else()
+    if( NOT MAC_DISABLE_BUNDLE )
+        set( BUNDLE_FLAG  MACOSX_BUNDLE )
+    endif()
+
+    add_executable( ${PROJECT_NAME} ${BUNDLE_FLAG} ${EXECUTABLE_FLAG}
+        ${PROJECT_SOURCE_FILES}
         ${RESOURCES_LIST}
     )
 
 endif()
 
-if( TARGET_FILE_TREE_FOUND )
-    add_dependencies(  ${PROJECT_NAME} FILE_TREE )
-    
+if (QT5_FOUND)
+    link_with_qt5(${PROJECT_NAME})
 endif()
 
 if ( QT5_FOUND )
@@ -317,12 +340,12 @@ if ( QT5_FOUND )
     configure_file( ${DAVA_CONFIGURE_FILES_PATH}/QtConfTemplate.in
                     ${CMAKE_CURRENT_BINARY_DIR}/DavaConfigDebug.in  )
     configure_file( ${DAVA_CONFIGURE_FILES_PATH}/QtConfTemplate.in
-                    ${CMAKE_CURRENT_BINARY_DIR}/DavaConfigRelWithDebinfo.in  ) 
+                    ${CMAKE_CURRENT_BINARY_DIR}/DavaConfigRelWithDebinfo.in  )
     configure_file( ${DAVA_CONFIGURE_FILES_PATH}/QtConfTemplate.in
                     ${CMAKE_CURRENT_BINARY_DIR}/DavaConfigRelease.in  )
 
-    ADD_CUSTOM_COMMAND( TARGET ${PROJECT_NAME}  POST_BUILD 
-       COMMAND ${CMAKE_COMMAND} -E copy 
+    ADD_CUSTOM_COMMAND( TARGET ${PROJECT_NAME}  POST_BUILD
+       COMMAND ${CMAKE_COMMAND} -E copy
        ${CMAKE_CURRENT_BINARY_DIR}/DavaConfig$(CONFIGURATION).in
        ${QTCONF_DEPLOY_PATH}
     )
@@ -356,21 +379,15 @@ if( ANDROID AND NOT ANDROID_CUSTOM_BUILD )
         execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${ANDROID_JAVA_RES} ${CMAKE_BINARY_DIR}/res )
     endif()
 
-
-    if( ANDROID_DATA_FOLDER )
-        set( ASSETS_FOLDER "${ANDROID_JAVA_ASSET_FOLDER}" )    
-
-    else()
+    if( APP_DATA )
         get_filename_component( ASSETS_FOLDER ${APP_DATA} NAME )
-          
+        execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${APP_DATA} ${CMAKE_BINARY_DIR}/assets/${ASSETS_FOLDER} )
     endif()
-
-    execute_process(COMMAND ${CMAKE_COMMAND} -E copy_directory ${APP_DATA} ${CMAKE_BINARY_DIR}/assets/${ASSETS_FOLDER} )
 
     if( ANDROID_ICO )
-        execute_process(COMMAND ${CMAKE_COMMAND} -E copy ${ANDROID_ICO}  ${CMAKE_BINARY_DIR} )     
+        execute_process(COMMAND ${CMAKE_COMMAND} -E copy ${ANDROID_ICO}  ${CMAKE_BINARY_DIR} )
     endif()
-      
+
     file ( GLOB SO_FILES ${DAVA_THIRD_PARTY_LIBRARIES_PATH}/*.so )
     execute_process(COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/libs/${ANDROID_NDK_ABI_NAME} )
     foreach ( FILE ${SO_FILES} )
@@ -393,7 +410,7 @@ if( ANDROID AND NOT ANDROID_CUSTOM_BUILD )
 
 elseif( IOS )
     set_target_properties( ${PROJECT_NAME} PROPERTIES
-        MACOSX_BUNDLE_INFO_PLIST "${IOS_PLISTT}" 
+        MACOSX_BUNDLE_INFO_PLIST "${IOS_PLISTT}"
         RESOURCE                 "${RESOURCES_LIST}"
         XCODE_ATTRIBUTE_INFOPLIST_PREPROCESS YES
     )
@@ -408,10 +425,12 @@ elseif( IOS )
 
 elseif( MACOS )
     set_target_properties ( ${PROJECT_NAME} PROPERTIES
-                            MACOSX_BUNDLE_INFO_PLIST "${MACOS_PLIST}" 
+                            MACOSX_BUNDLE_INFO_PLIST "${MACOS_PLIST}"
                             XCODE_ATTRIBUTE_INFOPLIST_PREPROCESS YES
                             RESOURCE "${RESOURCES_LIST}"
                           )
+
+    set_property(TARGET ${PROJECT_NAME} APPEND_STRING PROPERTY LINK_FLAGS " -Wl,-dead_strip")
 
     if( DEPLOY )
         set( OUTPUT_DIR ${DEPLOY_DIR}/${PROJECT_NAME}.app/Contents )
@@ -421,47 +440,42 @@ elseif( MACOS )
     endif()
 
     set( BINARY_DIR ${OUTPUT_DIR}/MacOS/${PROJECT_NAME} )
-    
+
     if( DAVA_FOUND )
-        ADD_CUSTOM_COMMAND(
-        TARGET ${PROJECT_NAME}
-        POST_BUILD
-            COMMAND   
-            install_name_tool -change @executable_path/../Frameworks/libfmodex.dylib  @executable_path/../Resources/libfmodex.dylib ${OUTPUT_DIR}/Resources/libfmodevent.dylib  
-
-            COMMAND   
-            install_name_tool -change ./libfmodevent.dylib @executable_path/../Resources/libfmodevent.dylib ${BINARY_DIR}    
-
-            COMMAND   
-            install_name_tool -change ./libfmodex.dylib @executable_path/../Resources/libfmodex.dylib ${BINARY_DIR}   
-
-            COMMAND 
-            install_name_tool -change ./libIMagickHelper.dylib @executable_path/../Resources/libIMagickHelper.dylib ${BINARY_DIR}     
-
-            COMMAND   
-            install_name_tool -change ./libTextureConverter.dylib @executable_path/../Resources/libTextureConverter.dylib ${BINARY_DIR}   
-        )
-
+        set(LD_RUNPATHES "@executable_path @executable_path/../Resources @executable_path/../Frameworks")
+        set_target_properties(${PROJECT_NAME} PROPERTIES XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${LD_RUNPATHES}")
     endif()
 
-elseif ( WIN32 )       
+    if (QT5_FOUND AND NOT DEPLOY AND NOT TEAMCITY_DEPLOY)
+        set(LD_RUNPATHES "${LD_RUNPATHES} ${QT5_LIB_PATH}")
+        set_target_properties(${PROJECT_NAME} PROPERTIES XCODE_ATTRIBUTE_LD_RUNPATH_SEARCH_PATHS "${LD_RUNPATHES}")
+    endif()
+
+elseif ( WIN32 )
     if( "${EXECUTABLE_FLAG}" STREQUAL "WIN32" )
-        set_target_properties ( ${PROJECT_NAME} PROPERTIES LINK_FLAGS "/ENTRY: /NODEFAULTLIB:libcmt.lib /NODEFAULTLIB:libcmtd.lib" ) 
+        set_target_properties ( ${PROJECT_NAME} PROPERTIES LINK_FLAGS "/ENTRY: /NODEFAULTLIB:libcmt.lib /NODEFAULTLIB:libcmtd.lib" )
 
     else()
-        set_target_properties ( ${PROJECT_NAME} PROPERTIES LINK_FLAGS "/NODEFAULTLIB:libcmt.lib /NODEFAULTLIB:libcmtd.lib" )    
-    
+        set_target_properties ( ${PROJECT_NAME} PROPERTIES LINK_FLAGS "/NODEFAULTLIB:libcmt.lib /NODEFAULTLIB:libcmtd.lib" )
+
     endif()
 
 
-    if( DEBUG_INFO )   
+    if( DEBUG_INFO )
         set_target_properties ( ${PROJECT_NAME} PROPERTIES LINK_FLAGS_RELEASE "/DEBUG /SUBSYSTEM:WINDOWS" )
     else()
         set_target_properties ( ${PROJECT_NAME} PROPERTIES LINK_FLAGS_RELEASE "/SUBSYSTEM:WINDOWS" )
     endif()
 
     list( APPEND DAVA_BINARY_WIN32_DIR "${ADDED_BINARY_DIR}" )
-    configure_file( ${DAVA_CONFIGURE_FILES_PATH}/DavaVcxprojUserTemplate.in
+
+    if ( WINDOWS_UAP )
+        set ( DAVA_VCPROJ_USER_TEMPLATE "DavaWinUAPVcxprojUserTemplate.in" )
+    else ()
+        set ( DAVA_VCPROJ_USER_TEMPLATE "DavaVcxprojUserTemplate.in" )
+    endif ()
+
+    configure_file( ${DAVA_CONFIGURE_FILES_PATH}/${DAVA_VCPROJ_USER_TEMPLATE}
                     ${CMAKE_CURRENT_BINARY_DIR}/${PROJECT_NAME}.vcxproj.user @ONLY )
 
     if( OUTPUT_TO_BUILD_DIR )
@@ -471,10 +485,29 @@ elseif ( WIN32 )
             set_target_properties ( ${PROJECT_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG}  ${OUTPUT_DIR} )
         endforeach( OUTPUTCONFIG CMAKE_CONFIGURATION_TYPES )
      endif()
-	 
-	if ( WINDOWS_UAP )
-		set_property(TARGET ${PROJECT_NAME} PROPERTY VS_WINRT_COMPONENT TRUE)
-	endif()
+
+    if ( WINDOWS_UAP )
+        set_property(TARGET ${PROJECT_NAME} PROPERTY VS_WINRT_COMPONENT TRUE)
+        
+        #add a build step for dll deploy fix. 
+        if ( NEED_DLL_FIX )
+            set ( DLL_FIX_TARGET_NAME "DLL_FIX_${PROJECT_NAME}" )
+            
+            if ( "${PROJECT_NAME}" STREQUAL "${CMAKE_PROJECT_NAME}" )
+                set ( VS_PROJECT_PATH "${CMAKE_BINARY_DIR}" )
+            else ()
+                set ( VS_PROJECT_PATH "${CMAKE_BINARY_DIR}/${PROJECT_NAME}" )
+            endif ()
+            
+            add_custom_target ( ${DLL_FIX_TARGET_NAME} ALL
+                    COMMAND python.exe ${DAVA_SCRIPTS_FILES_PATH}/vs_uwp_dll_deploy_fix.py
+                                       ${VS_PROJECT_PATH}/${PROJECT_NAME}.vcxproj
+            )
+
+            add_dependencies( ${PROJECT_NAME} ${DLL_FIX_TARGET_NAME} )
+            set_property( TARGET ${DLL_FIX_TARGET_NAME} PROPERTY FOLDER "CMAKE" )
+        endif ()
+    endif()
 
 endif()
 
@@ -484,13 +517,13 @@ list ( APPEND DAVA_FOLDERS ${DAVA_THIRD_PARTY_LIBRARIES_PATH} )
 
 file_tree_check( "${DAVA_FOLDERS}" )
 
-if( DAVA_FOUND )
-    list ( APPEND LIBRARIES ${DAVA_LIBRARY} )
+if( TARGET_FILE_TREE_FOUND )
+    add_dependencies(  ${PROJECT_NAME} FILE_TREE_${PROJECT_NAME} )
 
 endif()
 
-if( DAVA_TOOLS_FOUND )
-    list ( APPEND LIBRARIES ${DAVA_TOOLS_LIBRARY} )
+if( DAVA_FOUND )
+    list ( APPEND LIBRARIES ${DAVA_LIBRARY} )
 
 endif()
 
@@ -506,7 +539,7 @@ if( ANDROID )
             endif()
         endforeach()
     endforeach()
-   
+
 endif()
 
 target_link_libraries( ${PROJECT_NAME} ${LINK_WHOLE_ARCHIVE_FLAG} ${TARGET_LIBRARIES} ${NO_LINK_WHOLE_ARCHIVE_FLAG} ${LIBRARIES} )
@@ -525,13 +558,13 @@ endforeach ()
 if( DEPLOY )
    message( "DEPLOY ${PROJECT_NAME} to ${DEPLOY_DIR}")
    execute_process( COMMAND ${CMAKE_COMMAND} -E make_directory ${DEPLOY_DIR} )
- 
+
     if( WIN32 )
         if( APP_DATA )
             get_filename_component( DIR_NAME ${APP_DATA} NAME )
 
-            ADD_CUSTOM_COMMAND( TARGET ${PROJECT_NAME}  POST_BUILD 
-               COMMAND ${CMAKE_COMMAND} -E copy_directory ${APP_DATA}  ${DEPLOY_DIR}/${DIR_NAME}/ 
+            ADD_CUSTOM_COMMAND( TARGET ${PROJECT_NAME}  POST_BUILD
+               COMMAND ${CMAKE_COMMAND} -E copy_directory ${APP_DATA}  ${DEPLOY_DIR}/${DIR_NAME}/
                COMMAND ${CMAKE_COMMAND} -E remove  ${DEPLOY_DIR}/${PROJECT_NAME}.ilk
             )
 
@@ -547,12 +580,36 @@ if( DEPLOY )
             set_target_properties ( ${PROJECT_NAME} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${OUTPUTCONFIG} ${OUTPUT_DIR} )
         endforeach( OUTPUTCONFIG CMAKE_CONFIGURATION_TYPES )
 
-    elseif( MACOS )
+    elseif( APPLE )
         set_target_properties( ${PROJECT_NAME} PROPERTIES XCODE_ATTRIBUTE_CONFIGURATION_BUILD_DIR  ${DEPLOY_DIR} )
 
-    endif() 
+        if( IOS )
 
-    if( QT_PREFIX )
+            if( NOT IOS_SDK )
+                set( IOS_SDK -sdk iphoneos  )
+            endif()
+
+            set( XCODERUN_PARAM ${IOS_SDK} PackageApplication -v ${DEPLOY_DIR}/${PROJECT_NAME}.app -o ${DEPLOY_DIR}/${PROJECT_NAME}.ipa )
+
+            if( DEVELOPER_NAME )
+                list( APPEND XCODERUN_PARAM  "--sign" "${DEVELOPER_NAME}" )
+            endif()
+
+            if( PROVISONING_PROFILE )
+                list( APPEND XCODERUN_PARAM  "--embed" "${PROVISONING_PROFILE}" )
+            endif()
+
+            add_custom_target ( IOS_DEPLOY_${PROJECT_NAME} ALL COMMAND ${IOS_DEPLOY_CUSTOM_COMAND}
+                                                               COMMAND /usr/bin/xcrun ${XCODERUN_PARAM} VERBATIM )
+
+
+            add_dependencies(  IOS_DEPLOY_${PROJECT_NAME} ${PROJECT_NAME} )
+
+        endif()
+
+    endif()
+
+    if( QT5_FOUND )
         qt_deploy( )
 
     endif()

@@ -32,6 +32,7 @@
 
 #include <QAbstractItemModel>
 #include <QMimeData>
+#include "EditorSystems/SelectionContainer.h"
 
 #include "Model/PackageHierarchy/PackageListener.h"
 
@@ -48,8 +49,8 @@ class PackageModel : public QAbstractItemModel, private PackageListener
 
 public:
     PackageModel(PackageNode *root, QtModelPackageCommandExecutor *commandExecutor, QObject *parent = 0);
-    virtual ~PackageModel();
-    
+    ~PackageModel() override;
+
     QModelIndex indexByNode(PackageBaseNode *node) const;
     
     QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
@@ -65,27 +66,37 @@ public:
     QStringList mimeTypes() const override;
     QMimeData *mimeData(const QModelIndexList &indexes) const override;
     bool dropMimeData(const QMimeData *data, Qt::DropAction action, int row, int column, const QModelIndex &parent) override;
-    
+
+signals:
+    void BeforeNodesMoved(const SelectedNodes& nodes);
+    void NodesMoved(const SelectedNodes& nodes);
+
 private: // PackageListener
     void ControlPropertyWasChanged(ControlNode *node, AbstractProperty *property) override;
-
+    void StylePropertyWasChanged(StyleSheetNode *node, AbstractProperty *property) override;
+    
     void ControlWillBeAdded(ControlNode *node, ControlsContainerNode *destination, int row) override;
     void ControlWasAdded(ControlNode *node, ControlsContainerNode *destination, int row) override;
     
     void ControlWillBeRemoved(ControlNode *node, ControlsContainerNode *from) override;
     void ControlWasRemoved(ControlNode *node, ControlsContainerNode *from) override;
 
+    void StyleWillBeAdded(StyleSheetNode *node, StyleSheetsNode *destination, int index) override;
+    void StyleWasAdded(StyleSheetNode *node, StyleSheetsNode *destination, int index) override;
+    
+    void StyleWillBeRemoved(StyleSheetNode *node, StyleSheetsNode *from) override;
+    void StyleWasRemoved(StyleSheetNode *node, StyleSheetsNode *from) override;
+    
     void ImportedPackageWillBeAdded(PackageNode *node, ImportedPackagesNode *to, int index) override;
     void ImportedPackageWasAdded(PackageNode *node, ImportedPackagesNode *to, int index) override;
     
     void ImportedPackageWillBeRemoved(PackageNode *node, ImportedPackagesNode *from) override;
     void ImportedPackageWasRemoved(PackageNode *node, ImportedPackagesNode *from) override;
-    
-private:
-    PackageNode *root;
-    QtModelPackageCommandExecutor *commandExecutor;
 
+    int GetRowIndex(int row, const QModelIndex& parent) const;
 
+    PackageNode* root = nullptr;
+    QtModelPackageCommandExecutor* commandExecutor = nullptr;
 };
 
 #endif // __QUICKED_PACKAGE_MODEL_H__

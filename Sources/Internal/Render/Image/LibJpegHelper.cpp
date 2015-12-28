@@ -32,7 +32,6 @@
 #include "Render/Image/ImageConvert.h"
 
 #include "Render/Texture.h"
-#include "Render/RenderManager.h"
 
 #include "FileSystem/File.h"
 #include "FileSystem/FileSystem.h"
@@ -81,8 +80,8 @@ LibJpegHelper::LibJpegHelper()
     supportedExtensions.emplace_back(".jpeg");
     supportedFormats = { { FORMAT_RGB888, FORMAT_A8 } };
 }
-    
-bool LibJpegHelper::IsMyImage(File *infile) const
+
+bool LibJpegHelper::CanProcessFile(File* infile) const
 {
     return GetImageInfo(infile).dataSize != 0;
 }

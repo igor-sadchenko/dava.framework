@@ -45,6 +45,8 @@ public:
 
 	virtual void LoadResources();
 	virtual void UnloadResources();
+    bool SystemInput(UIEvent *currentInput) override;
+    void SystemScreenSizeDidChanged(const Rect &newFullScreenSize) override;
 
     int32 GetScreenID() const { return screenID; };
     
@@ -59,7 +61,7 @@ protected:
     Font *font;
     
     int32 screenID;
-    
+    bool loaded;
 };
 
 #endif //__BASE_SCREEN_H__
