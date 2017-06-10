@@ -1,42 +1,16 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __DAVAENGINE_UI_EVENT_H__
 #define __DAVAENGINE_UI_EVENT_H__
 
-#include "Base/BaseTypes.h"
 #include "Math/Vector.h"
+#include "Input/KeyboardDevice.h"
+#include "Input/GamepadDevice.h"
+
+#include "Engine/EngineTypes.h"
 
 namespace DAVA
 {
-	
 class UIControl;
+class Window;
 /**
 \ingroup controlsystem
 \brief User input representation.
@@ -59,7 +33,8 @@ public:
         KEY_DOWN,
         KEY_DOWN_REPEAT, //!< Usefull if user hold key in text editor and wait cursor to move
         KEY_UP,
-        JOYSTICK
+        JOYSTICK,
+        GESTURE, // mac os touch pad gestures only for now
     };
 
     /**
@@ -84,23 +59,18 @@ public:
 
     friend class UIControlSystem;
 
-    enum eButtonID : int32
+#if !defined(__DAVAENGINE_COREV2__)
+    enum Modifier
     {
-        BUTTON_NONE = 0,
-        BUTTON_1,
-        BUTTON_2,
-        BUTTON_3
-    };
+        NONE = 0, // Used to denote no flags explicitly
+        SHIFT_DOWN = 1 << 0,
+        CONTROL_DOWN = 1 << 1,
+        ALT_DOWN = 1 << 2,
+        COMMAND_DOWN = 1 << 3, // Command on OS X
 
-    enum class Device : uint32
-    {
-        UNKNOWN = 0,
-        TOUCH_SURFACE,
-        MOUSE,
-        KEYBOARD,
-        GAMEPAD,
-        PEN
+        LAST = COMMAND_DOWN
     };
+#endif
 
     UIEvent() = default;
 
@@ -113,21 +83,59 @@ public:
         }
     }
 
-    eInputHandledType GetInputHandledType() { return inputHandledType; };
-    void ResetInputHandledType() { inputHandledType = INPUT_NOT_HANDLED; };
+    eInputHandledType GetInputHandledType()
+    {
+        return inputHandledType;
+    }
 
-    uint32 tid = 0; // event id, for the platforms with mouse this id means mouse button id, key codes for keys, axis id for joystick
+    void ResetInputHandledType()
+    {
+        inputHandledType = INPUT_NOT_HANDLED;
+    }
+
+    struct WheelDelta
+    {
+        float32 x;
+        float32 y;
+    };
+
+    struct Gesture
+    {
+        float32 magnification; // delta -1..1
+        float32 rotation; // delta angle in degrees -cw +ccw
+        float32 dx; // -1..1 (-1 left)
+        float32 dy; // -1..1 (-1 top)
+    };
+
+    union {
+        uint32 touchId;
+        Key key;
+        char32_t keyChar; // unicode utf32 char
+        eMouseButtons mouseButton;
+#if defined(__DAVAENGINE_COREV2__)
+        eGamepadElements element;
+#else
+        GamepadDevice::eDavaGamepadElement element;
+#endif
+        WheelDelta wheelDelta; // scroll delta in mouse wheel clicks (or lines)
+        Gesture gesture; // pinch/rotate/swipe
+    };
     Vector2 point; // point of pressure in virtual coordinates
-    Vector2 scrollDelta; // scroll delta in mouse wheel clicks (or lines)
     Vector2 physPoint; // point of pressure in physical coordinates
+    bool isRelative = false; // cursor coordinates in eCursorCapture::PINNING mode
     float64 timestamp = 0.0; //(TODO not all platforms) time stemp of the event occurrence
-    Phase phase = Phase::BEGAN; // began, ended, moved. See Phase
+    Phase phase = Phase::ERROR; // began, ended, moved. See Phase
     UIControl* touchLocker = nullptr; // control that handles this input
     int32 controlState = CONTROL_STATE_RELEASED; // input state relative to control (outside, inside). Used for point inputs only(mouse, touch)
-    int32 tapCount = 0; // (TODO not all platforms) count of the continuous inputs (clicks for mouse)
-    char16 keyChar = 0; // (TODO make char32_t) unicode/translated character produced by key using current language, caps etc. Used only with CHAR.
-    Device device = Device::UNKNOWN;
+    uint32 tapCount = 0; // (TODO not all platforms) count of the continuous inputs (clicks for mouse)
     eInputHandledType inputHandledType = INPUT_NOT_HANDLED; //!< input handled type, INPUT_NOT_HANDLED by default.
+    eInputDevices device = eInputDevices::UNKNOWN;
+#if defined(__DAVAENGINE_COREV2__)
+    Window* window = nullptr;
+    eModifierKeys modifiers = eModifierKeys::NONE;
+#else
+    uint32 modifiers = 0;
+#endif
 };
 };
 

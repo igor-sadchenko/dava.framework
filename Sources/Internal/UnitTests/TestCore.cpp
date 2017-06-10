@@ -1,31 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
 #include "TestCore.h"
 
 #include "Debug/DVAssert.h"
@@ -38,20 +10,26 @@ namespace DAVA
 {
 namespace UnitTests
 {
+// Move dtor to source file to prevent clang warning: 'class' has no out-of-line virtual method definitions
+TestClassFactoryBase::~TestClassFactoryBase() = default;
 
 TestCore::TestClassInfo::TestClassInfo(const char* name_, TestClassFactoryBase* factory_)
     : name(name_)
     , factory(factory_)
-{}
+{
+}
 
 TestCore::TestClassInfo::TestClassInfo(TestClassInfo&& other)
     : name(std::move(other.name))
     , runTest(other.runTest)
     , factory(std::move(other.factory))
-    , testedClasses(std::move(other.testedClasses))
-{}
+    , testedFiles(std::move(other.testedFiles))
+{
+}
 
-TestCore::TestClassInfo::~TestClassInfo() {}
+TestCore::TestClassInfo::~TestClassInfo()
+{
+}
 
 //////////////////////////////////////////////////////////////////////////
 TestCore* TestCore::Instance()
@@ -80,7 +58,7 @@ void TestCore::RunOnlyTheseTestClasses(const String& testClassNames)
     if (!testClassNames.empty())
     {
         Vector<String> testNames;
-        Split(testClassNames, ";", testNames);
+        Split(testClassNames, ";, ", testNames);
 
         // First, disable all tests
         for (TestClassInfo& x : testClasses)
@@ -109,7 +87,7 @@ void TestCore::DisableTheseTestClasses(const String& testClassNames)
     if (!testClassNames.empty())
     {
         Vector<String> testNames;
-        Split(testClassNames, ";", testNames);
+        Split(testClassNames, ";, ", testNames);
 
         for (const String& testName : testNames)
         {
@@ -163,11 +141,12 @@ bool TestCore::ProcessTests(float32 timeElapsed)
                 {
                     curTestName = curTestClass->TestName(curTestIndex);
                     testStartedCallback(curTestClassName, curTestName);
+                    curTestClass->InitTimeStampForTest(curTestName);
                     curTestClass->SetUp(curTestName);
                     testSetUpInvoked = true;
+                    curTestClass->RunTest(curTestIndex);
                 }
 
-                curTestClass->RunTest(curTestIndex);
                 if (curTestClass->TestComplete(curTestName))
                 {
                     testSetUpInvoked = false;
@@ -185,8 +164,8 @@ bool TestCore::ProcessTests(float32 timeElapsed)
                 testClassFinishedCallback(curTestClassName);
 
                 if (curTestClass->TestCount() > 0)
-                {   // Get and save class names which are covered by test only if test class has tests
-                    testClasses[curTestClassIndex].testedClasses = curTestClass->ClassesCoveredByTests();
+                { // Get and save files names which are covered by test only if test files has tests
+                    testClasses[curTestClassIndex].testedFiles = curTestClass->FilesCoveredByTests();
                 }
 
                 SafeDelete(curTestClass);
@@ -199,20 +178,19 @@ bool TestCore::ProcessTests(float32 timeElapsed)
     else
     {
         runLoopInProgress = false;
-        return false;   // No more tests, finish
+        return false; // No more tests, finish
     }
 }
 
-Map<String, Vector<String>> TestCore::GetTestCoverage()
+Map<String, TestCoverageInfo> TestCore::GetTestCoverage()
 {
-    Map<String, Vector<String>> result;
+    Map<String, TestCoverageInfo> result;
     for (TestClassInfo& x : testClasses)
     {
-        if (!x.testedClasses.empty())
+        if (!x.testedFiles.testFiles.empty())
         {
-            result.emplace(x.name, std::move(x.testedClasses));
+            result.emplace(x.name, std::move(x.testedFiles));
         }
-        x.runTest = x.runTest;
     }
     return result;
 }
@@ -227,5 +205,5 @@ void TestCore::RegisterTestClass(const char* name, TestClassFactoryBase* factory
     testClasses.emplace_back(name, factory);
 }
 
-}   // namespace UnitTests
-}   // namespace DAVA
+} // namespace UnitTests
+} // namespace DAVA

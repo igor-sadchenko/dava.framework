@@ -1,39 +1,11 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Render/Highlevel/RenderLayer.h"
 #include "Render/Highlevel/RenderBatch.h"
 #include "Render/Highlevel/RenderBatchArray.h"
 #include "Render/Highlevel/Camera.h"
+#include "Render/VisibilityQueryResults.h"
 #include "Base/Radix/Radix.h"
-#include "Debug/Stats.h"
-#include "Render/OcclusionQuery.h"
+#include "Debug/ProfilerGPU.h"
+#include "Debug/ProfilerMarkerNames.h"
 
 namespace DAVA
 {
@@ -92,7 +64,7 @@ RenderLayer::eRenderLayerID RenderLayer::GetLayerIDByName(const FastName& name)
     {
         if (LAYER_NAMES[id] == name)
         {
-            return (eRenderLayerID)id;
+            return static_cast<eRenderLayerID>(id);
         }
     }
     return RENDER_LAYER_INVALID_ID;
@@ -100,13 +72,9 @@ RenderLayer::eRenderLayerID RenderLayer::GetLayerIDByName(const FastName& name)
 
 void RenderLayer::Draw(Camera* camera, const RenderBatchArray& batchArray, rhi::HPacketList packetList)
 {
-    TIME_PROFILE("RenderLayer::Draw");
+    uint32 size = static_cast<uint32>(batchArray.GetRenderBatchCount());
 
-    uint32 size = (uint32)batchArray.GetRenderBatchCount();
-
-    FrameOcclusionQueryManager::Instance()->BeginQuery(GetLayerNameByID(layerID));
     rhi::Packet packet;
-
     for (uint32 k = 0; k < size; ++k)
     {
         RenderBatch* batch = batchArray.Get(k);
@@ -119,10 +87,23 @@ void RenderLayer::Draw(Camera* camera, const RenderBatchArray& batchArray, rhi::
             DVASSERT(packet.primitiveCount);
             mat->BindParams(packet);
             packet.debugMarker = mat->GetEffectiveFXName().c_str();
+            packet.perfQueryStart = batch->perfQueryStart;
+            packet.perfQueryEnd = batch->perfQueryEnd;
+
+#ifdef __DAVAENGINE_RENDERSTATS__
+#ifdef __DAVAENGINE_RENDERSTATS_ALPHABLEND__
+            if (packet.userFlags & NMaterial::USER_FLAG_ALPHABLEND)
+                packet.queryIndex = VisibilityQueryResults::QUERY_INDEX_ALPHABLEND;
+            else if (layerID == RENDER_LAYER_SHADOW_VOLUME_ID)
+                packet.queryIndex = VisibilityQueryResults::QUERY_INDEX_LAYER_SHADOW_VOLUME;
+            else
+                packet.queryIndex = DAVA::InvalidIndex;
+#else
+            packet.queryIndex = layerID;
+#endif
+#endif
             rhi::AddPacket(packetList, packet);
         }
     }
-
-    FrameOcclusionQueryManager::Instance()->EndQuery(GetLayerNameByID(layerID));
 }
 };

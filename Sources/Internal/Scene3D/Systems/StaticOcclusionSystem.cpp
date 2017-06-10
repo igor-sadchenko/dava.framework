@@ -1,32 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Scene3D/Systems/StaticOcclusionSystem.h"
 #include "Scene3D/Systems/EventSystem.h"
 #include "Scene3D/Entity.h"
@@ -34,6 +5,7 @@
 #include "Scene3D/Components/RenderComponent.h"
 #include "Scene3D/Components/TransformComponent.h"
 #include "Scene3D/Components/StaticOcclusionComponent.h"
+#include "Scene3D/Components/SingleComponents/TransformSingleComponent.h"
 #include "Sound/SoundEvent.h"
 #include "Sound/SoundSystem.h"
 #include "Render/Highlevel/RenderSystem.h"
@@ -42,11 +14,12 @@
 #include "Render/Highlevel/Landscape.h"
 #include "Render/Highlevel/StaticOcclusion.h"
 #include "Scene3D/Components/ComponentHelpers.h"
-#include "Scene3D/Components/LodComponent.h"
-#include "Scene3D/Systems/LodSystem.h"
+#include "Scene3D/Lod/LodComponent.h"
+#include "Scene3D/Lod/LodSystem.h"
 #include "Render/Highlevel/Landscape.h"
 #include "Render/Material/NMaterialNames.h"
-#include "Debug/Stats.h"
+#include "Debug/ProfilerCPU.h"
+#include "Debug/ProfilerMarkerNames.h"
 
 namespace DAVA
 {
@@ -66,18 +39,18 @@ void StaticOcclusionSystem::UndoOcclusionVisibility()
 
     activeBlockIndex = 0;
     activePVSSet = nullptr;
+
+    occludedObjectsCount = 0;
+    visibleObjestsCount = 0;
 }
 
 void StaticOcclusionSystem::ProcessStaticOcclusionForOneDataSet(uint32 blockIndex, StaticOcclusionData* data)
 {
-//#define LOG_DEBUG_OCCLUSION_APPLY
-#if defined(LOG_DEBUG_OCCLUSION_APPLY)
-    uint32 visCount = 0;
-    uint32 invisCount = 0;
-#endif
+    occludedObjectsCount = 0;
+    visibleObjestsCount = 0;
 
     uint32* bitdata = data->GetBlockVisibilityData(blockIndex);
-    uint32 size = (uint32)indexedRenderObjects.size();
+    uint32 size = static_cast<uint32>(indexedRenderObjects.size());
     for (uint32 k = 0; k < size; ++k)
     {
         uint32 index = k / 32; // number of bits in uint32
@@ -90,23 +63,17 @@ void StaticOcclusionSystem::ProcessStaticOcclusionForOneDataSet(uint32 blockInde
         if (bitdata[index] & (1 << shift))
         {
             ro->SetFlags(ro->GetFlags() | RenderObject::VISIBLE_STATIC_OCCLUSION);
-
-#if defined(LOG_DEBUG_OCCLUSION_APPLY)
-            visCount++;
-#endif
+            ++visibleObjestsCount;
         }
         else
         {
             ro->SetFlags(ro->GetFlags() & ~RenderObject::VISIBLE_STATIC_OCCLUSION);
-
-#if defined(LOG_DEBUG_OCCLUSION_APPLY)
-            invisCount++;
-#endif
+            ++occludedObjectsCount;
         }
     }
 
 #if defined(LOG_DEBUG_OCCLUSION_APPLY)
-    Logger::Debug("apply cell: %d vis:%d invis:%d", blockIndex, visCount, invisCount);
+    Logger::Debug("apply cell: %d vis:%d invis:%d", blockIndex, visibleObjestsCount, occludedObjectsCount);
 #endif
 }
 
@@ -118,13 +85,29 @@ StaticOcclusionSystem::StaticOcclusionSystem(Scene* scene)
         indexedRenderObjects[k] = nullptr;
 }
 
-StaticOcclusionSystem::~StaticOcclusionSystem()
-{
-}
-
 void StaticOcclusionSystem::Process(float32 timeElapsed)
 {
-    TIME_PROFILE("StaticOcclusionSystem::Process")
+    DAVA_PROFILER_CPU_SCOPE(ProfilerCPUMarkerName::SCENE_STATIC_OCCLUSION_SYSTEM)
+
+    TransformSingleComponent* tsc = GetScene()->transformSingleComponent;
+    for (auto& pair : tsc->worldTransformChanged.map)
+    {
+        if (pair.first->GetComponentsCount(Component::STATIC_OCCLUSION_DEBUG_DRAW_COMPONENT) > 0)
+        {
+            for (Entity* entity : pair.second)
+            {
+                StaticOcclusionDebugDrawComponent* debugDrawComponent = GetStaticOcclusionDebugDrawComponent(entity);
+                if (debugDrawComponent && debugDrawComponent->GetRenderObject())
+                {
+                    RenderObject* object = debugDrawComponent->GetRenderObject();
+                    // Update new transform pointer, and mark that transform is changed
+                    Matrix4* worldTransformPointer = static_cast<TransformComponent*>(entity->GetComponent(Component::TRANSFORM_COMPONENT))->GetWorldTransformPtr();
+                    object->SetWorldTransformPtr(worldTransformPointer);
+                    GetScene()->renderSystem->MarkForUpdate(object);
+                }
+            }
+        }
+    }
 
     SetCamera(GetScene()->GetCurrentCamera());
 
@@ -132,7 +115,7 @@ void StaticOcclusionSystem::Process(float32 timeElapsed)
     if (!camera)
         return;
 
-    uint32 size = (uint32)staticOcclusionComponents.size();
+    uint32 size = static_cast<uint32>(staticOcclusionComponents.size());
     if (size == 0)
         return;
 
@@ -149,14 +132,14 @@ void StaticOcclusionSystem::Process(float32 timeElapsed)
 
         if ((position.x >= data->bbox.min.x) && (position.x <= data->bbox.max.x) && (position.y >= data->bbox.min.y) && (position.y <= data->bbox.max.y))
         {
-            uint32 x = (uint32)((position.x - data->bbox.min.x) / (data->bbox.max.x - data->bbox.min.x) * (float32)data->sizeX);
-            uint32 y = (uint32)((position.y - data->bbox.min.y) / (data->bbox.max.y - data->bbox.min.y) * (float32)data->sizeY);
+            uint32 x = static_cast<uint32>((position.x - data->bbox.min.x) / (data->bbox.max.x - data->bbox.min.x) * static_cast<float32>(data->sizeX));
+            uint32 y = static_cast<uint32>((position.y - data->bbox.min.y) / (data->bbox.max.y - data->bbox.min.y) * static_cast<float32>(data->sizeY));
             if ((x < data->sizeX) && (y < data->sizeY)) //
             {
                 float32 dH = data->cellHeightOffset ? data->cellHeightOffset[x + y * data->sizeX] : 0;
                 if ((position.z >= (data->bbox.min.z + dH)) && (position.z <= (data->bbox.max.z + dH)))
                 {
-                    uint32 z = (uint32)((position.z - (data->bbox.min.z + dH)) / (data->bbox.max.z - data->bbox.min.z) * (float32)data->sizeZ);
+                    uint32 z = static_cast<uint32>((position.z - (data->bbox.min.z + dH)) / (data->bbox.max.z - data->bbox.min.z) * static_cast<float32>(data->sizeZ));
 
                     if (z < data->sizeZ)
                     {
@@ -189,6 +172,10 @@ void StaticOcclusionSystem::Process(float32 timeElapsed)
     {
         ProcessStaticOcclusionForOneDataSet(activeBlockIndex, activePVSSet);
     }
+
+#if defined(__DAVAENGINE_RENDERSTATS__)
+    Renderer::GetRenderStats().occludedRenderObjects += occludedObjectsCount;
+#endif
 }
 
 void StaticOcclusionSystem::RegisterEntity(Entity* entity)
@@ -241,7 +228,7 @@ void StaticOcclusionSystem::UnregisterComponent(Entity* entity, Component* compo
 
 void StaticOcclusionSystem::AddEntity(Entity* entity)
 {
-    staticOcclusionComponents.push_back((StaticOcclusionDataComponent*)entity->GetComponent(Component::STATIC_OCCLUSION_DATA_COMPONENT));
+    staticOcclusionComponents.push_back(static_cast<StaticOcclusionDataComponent*>(entity->GetComponent(Component::STATIC_OCCLUSION_DATA_COMPONENT)));
 }
 
 void StaticOcclusionSystem::AddRenderObjectToOcclusion(RenderObject* renderObject)
@@ -251,9 +238,9 @@ void StaticOcclusionSystem::AddRenderObjectToOcclusion(RenderObject* renderObjec
      */
     if (renderObject->GetStaticOcclusionIndex() != INVALID_STATIC_OCCLUSION_INDEX)
     {
-        indexedRenderObjects.resize(Max((uint32)indexedRenderObjects.size(), (uint32)(renderObject->GetStaticOcclusionIndex() + 1)));
-        DVASSERT(indexedRenderObjects[renderObject->GetStaticOcclusionIndex()] == nullptr);
-
+        indexedRenderObjects.resize(Max(static_cast<uint32>(indexedRenderObjects.size()), static_cast<uint32>(renderObject->GetStaticOcclusionIndex() + 1)));
+        DVASSERT(indexedRenderObjects[renderObject->GetStaticOcclusionIndex()] == nullptr,
+                 "Static Occlusion merge conflict. Skip this message and invalidate Static Occlusion");
         indexedRenderObjects[renderObject->GetStaticOcclusionIndex()] = renderObject;
     }
 }
@@ -272,14 +259,14 @@ void StaticOcclusionSystem::RemoveRenderObjectFromOcclusion(RenderObject* render
 
 void StaticOcclusionSystem::RemoveEntity(Entity* entity)
 {
-    for (uint32 k = 0; k < (uint32)staticOcclusionComponents.size(); ++k)
+    for (uint32 k = 0; k < static_cast<uint32>(staticOcclusionComponents.size()); ++k)
     {
         StaticOcclusionDataComponent* component = staticOcclusionComponents[k];
         if (component == entity->GetComponent(Component::STATIC_OCCLUSION_DATA_COMPONENT))
         {
             UndoOcclusionVisibility();
 
-            staticOcclusionComponents[k] = staticOcclusionComponents[(uint32)staticOcclusionComponents.size() - 1];
+            staticOcclusionComponents[k] = staticOcclusionComponents[static_cast<uint32>(staticOcclusionComponents.size()) - 1];
             staticOcclusionComponents.pop_back();
             break;
         }
@@ -335,9 +322,6 @@ void StaticOcclusionSystem::InvalidateOcclusionIndicesRecursively(Entity* entity
 StaticOcclusionDebugDrawSystem::StaticOcclusionDebugDrawSystem(Scene* scene)
     : SceneSystem(scene)
 {
-    scene->GetEventSystem()->RegisterSystemForEvent(this, EventSystem::WORLD_TRANSFORM_CHANGED);
-    scene->GetEventSystem()->RegisterSystemForEvent(this, EventSystem::STATIC_OCCLUSION_COMPONENT_CHANGED);
-
     Color gridColor(0.0f, 0.3f, 0.1f, 0.2f);
     Color coverColor(0.1f, 0.5f, 0.1f, 0.3f);
 
@@ -354,20 +338,35 @@ StaticOcclusionDebugDrawSystem::StaticOcclusionDebugDrawSystem(Scene* scene)
     rhi::VertexLayout vertexLayout;
     vertexLayout.AddElement(rhi::VS_POSITION, 0, rhi::VDT_FLOAT, 3);
     vertexLayoutId = rhi::VertexLayout::UniqueId(vertexLayout);
+
+    GetScene()->GetEventSystem()->RegisterSystemForEvent(this, EventSystem::STATIC_OCCLUSION_COMPONENT_CHANGED);
 }
 
 StaticOcclusionDebugDrawSystem::~StaticOcclusionDebugDrawSystem()
 {
-    GetScene()->GetEventSystem()->UnregisterSystemForEvent(this, EventSystem::WORLD_TRANSFORM_CHANGED);
-    GetScene()->GetEventSystem()->UnregisterSystemForEvent(this, EventSystem::STATIC_OCCLUSION_COMPONENT_CHANGED);
-
+    SetScene(nullptr);
     SafeRelease(gridMaterial);
     SafeRelease(coverMaterial);
 }
 
+void StaticOcclusionDebugDrawSystem::SetScene(Scene* scene)
+{
+    Scene* oldScene = GetScene();
+    if (oldScene != nullptr)
+    {
+        oldScene->GetEventSystem()->UnregisterSystemForEvent(this, EventSystem::STATIC_OCCLUSION_COMPONENT_CHANGED);
+    }
+
+    SceneSystem::SetScene(scene);
+
+    if (scene != nullptr)
+    {
+        scene->GetEventSystem()->RegisterSystemForEvent(this, EventSystem::STATIC_OCCLUSION_COMPONENT_CHANGED);
+    }
+}
+
 void StaticOcclusionDebugDrawSystem::AddEntity(Entity* entity)
 {
-    StaticOcclusionComponent* staticOcclusionComponent = static_cast<StaticOcclusionComponent*>(entity->GetComponent(Component::STATIC_OCCLUSION_COMPONENT));
     Matrix4* worldTransformPointer = GetTransformComponent(entity)->GetWorldTransformPtr();
     //create render object
     ScopedPtr<RenderObject> debugRenderObject(new RenderObject());
@@ -403,17 +402,6 @@ void StaticOcclusionDebugDrawSystem::ImmediateEvent(Component* component, uint32
     Entity* entity = component->GetEntity();
     StaticOcclusionDebugDrawComponent* debugDrawComponent = GetStaticOcclusionDebugDrawComponent(entity);
     StaticOcclusionComponent* staticOcclusionComponent = GetStaticOcclusionComponent(entity);
-    if (event == EventSystem::WORLD_TRANSFORM_CHANGED)
-    {
-        // Update new transform pointer, and mark that transform is changed
-        Matrix4* worldTransformPointer = GetTransformComponent(entity)->GetWorldTransformPtr();
-        RenderObject* object = debugDrawComponent->GetRenderObject();
-        if (NULL != object)
-        {
-            object->SetWorldTransformPtr(worldTransformPointer);
-            entity->GetScene()->renderSystem->MarkForUpdate(object);
-        }
-    }
 
     if ((event == EventSystem::STATIC_OCCLUSION_COMPONENT_CHANGED) || (staticOcclusionComponent->GetPlaceOnLandscape()))
     {

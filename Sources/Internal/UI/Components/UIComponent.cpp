@@ -1,122 +1,165 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "UIComponent.h"
 #include "UI/UIControl.h"
 
-#include "UI/Layouts/UILinearLayoutComponent.h"
+#include "UI/Focus/UIFocusComponent.h"
+#include "UI/Focus/UIFocusGroupComponent.h"
+#include "UI/Focus/UINavigationComponent.h"
+#include "UI/Focus/UITabOrderComponent.h"
+#include "UI/Input/UIActionBindingComponent.h"
+#include "UI/Input/UIActionComponent.h"
+#include "UI/Input/UIModalInputComponent.h"
+#include "UI/Layouts/UIAnchorComponent.h"
 #include "UI/Layouts/UIFlowLayoutComponent.h"
 #include "UI/Layouts/UIFlowLayoutHintComponent.h"
 #include "UI/Layouts/UIIgnoreLayoutComponent.h"
+#include "UI/Layouts/UILayoutIsolationComponent.h"
+#include "UI/Layouts/UILayoutSourceRectComponent.h"
+#include "UI/Layouts/UILinearLayoutComponent.h"
 #include "UI/Layouts/UISizePolicyComponent.h"
-#include "UI/Layouts/UIAnchorComponent.h"
+#include "UI/Render/UIClipContentComponent.h"
+#include "UI/Render/UIDebugRenderComponent.h"
+#include "UI/Render/UISceneComponent.h"
+#include "UI/RichContent/UIRichContentComponent.h"
+#include "UI/RichContent/UIRichContentObjectComponent.h"
+#include "UI/Scroll/UIScrollBarDelegateComponent.h"
+#include "UI/Scroll/UIScrollComponent.h"
+#include "UI/Sound/UISoundComponent.h"
+#include "UI/Sound/UISoundValueFilterComponent.h"
+#include "UI/Update/UICustomUpdateDeltaComponent.h"
+#include "UI/Update/UIUpdateComponent.h"
+#include "Utils/StringFormat.h"
 
 namespace DAVA
 {
+DAVA_VIRTUAL_REFLECTION_IMPL(UIComponent)
+{
+    ReflectionRegistrator<UIComponent>::Begin()
+    .Field("type", &UIComponent::GetType, nullptr)
+    .End();
+}
 
 UIComponent::UIComponent()
     : control(nullptr)
 {
 }
 
-UIComponent::UIComponent(const UIComponent &src)
+UIComponent::UIComponent(const UIComponent& src)
     : control(nullptr)
 {
-    
 }
 
 UIComponent::~UIComponent()
 {
 }
 
-UIComponent &UIComponent::operator=(const UIComponent &src)
+UIComponent& UIComponent::operator=(const UIComponent& src)
 {
     return *this;
 }
 
-UIComponent * UIComponent::CreateByType(uint32 componentType)
+UIComponent* UIComponent::CreateByType(uint32 componentType)
 {
     switch (componentType)
     {
-        case LINEAR_LAYOUT_COMPONENT:
-            return new UILinearLayoutComponent();
+    case LINEAR_LAYOUT_COMPONENT:
+        return new UILinearLayoutComponent();
 
-        case FLOW_LAYOUT_COMPONENT:
-            return new UIFlowLayoutComponent();
+    case FLOW_LAYOUT_COMPONENT:
+        return new UIFlowLayoutComponent();
 
-        case FLOW_LAYOUT_HINT_COMPONENT:
-            return new UIFlowLayoutHintComponent();
+    case FLOW_LAYOUT_HINT_COMPONENT:
+        return new UIFlowLayoutHintComponent();
 
-        case IGNORE_LAYOUT_COMPONENT:
-            return new UIIgnoreLayoutComponent();
-            
-        case SIZE_POLICY_COMPONENT:
-            return new UISizePolicyComponent();
-            
-        case ANCHOR_COMPONENT:
-            return new UIAnchorComponent();
-            
-        default:
-            DVASSERT(false);
-            return nullptr;
+    case IGNORE_LAYOUT_COMPONENT:
+        return new UIIgnoreLayoutComponent();
+
+    case SIZE_POLICY_COMPONENT:
+        return new UISizePolicyComponent();
+
+    case ANCHOR_COMPONENT:
+        return new UIAnchorComponent();
+
+    case LAYOUT_SOURCE_RECT_COMPONENT:
+        return new UILayoutSourceRectComponent();
+
+    case LAYOUT_ISOLATION_COMPONENT:
+        return new UILayoutIsolationComponent();
+
+    case BACKGROUND_COMPONENT:
+        return new UIControlBackground();
+
+    case MODAL_INPUT_COMPONENT:
+        return new UIModalInputComponent();
+
+    case FOCUS_COMPONENT:
+        return new UIFocusComponent();
+
+    case FOCUS_GROUP_COMPONENT:
+        return new UIFocusGroupComponent();
+
+    case NAVIGATION_COMPONENT:
+        return new UINavigationComponent();
+
+    case TAB_ORDER_COMPONENT:
+        return new UITabOrderComponent();
+
+    case ACTION_COMPONENT:
+        return new UIActionComponent();
+
+    case ACTION_BINDING_COMPONENT:
+        return new UIActionBindingComponent();
+
+    case SCROLL_BAR_DELEGATE_COMPONENT:
+        return new UIScrollBarDelegateComponent();
+
+    case SCROLL_COMPONENT:
+        return new UIScrollComponent();
+
+    case SOUND_COMPONENT:
+        return new UISoundComponent();
+
+    case SOUND_VALUE_FILTER_COMPONENT:
+        return new UISoundValueFilterComponent();
+
+    case UPDATE_COMPONENT:
+        return new UIUpdateComponent();
+
+    case CUSTOM_UPDATE_DELTA_COMPONENT:
+        return new UICustomUpdateDeltaComponent();
+
+    case RICH_CONTENT_COMPONENT:
+        return new UIRichContentComponent();
+
+    case RICH_CONTENT_OBJECT_COMPONENT:
+        return new UIRichContentObjectComponent();
+
+    case SCENE_COMPONENT:
+        return new UISceneComponent();
+
+    case DEBUG_RENDER_COMPONENT:
+        return new UIDebugRenderComponent();
+
+    case CLIP_CONTENT_COMPONENT:
+        return new UIClipContentComponent();
+
+    default:
+        DVASSERT(false, Format("Can't create component with type %d", componentType).c_str());
+        return nullptr;
     }
-    
 }
-    
+
+RefPtr<UIComponent> UIComponent::SafeCreateByType(uint32 componentType)
+{
+    return RefPtr<UIComponent>(CreateByType(componentType));
+}
+
 bool UIComponent::IsMultiple(uint32 componentType)
 {
-    switch (componentType)
-    {
-        case LINEAR_LAYOUT_COMPONENT:
-            return false;
-
-        case FLOW_LAYOUT_COMPONENT:
-            return false;
-
-        case FLOW_LAYOUT_HINT_COMPONENT:
-            return false;
-
-        case IGNORE_LAYOUT_COMPONENT:
-            return false;
-            
-        case SIZE_POLICY_COMPONENT:
-            return false;
-            
-        case ANCHOR_COMPONENT:
-            return false;
-            
-        default:
-            DVASSERT(false);
-            return false;
-    }
-    
+    return false;
 }
 
-
+RefPtr<UIComponent> UIComponent::SafeClone() const
+{
+    return RefPtr<UIComponent>(Clone());
+}
 }

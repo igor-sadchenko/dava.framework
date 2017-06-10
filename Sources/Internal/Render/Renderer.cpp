@@ -1,33 +1,4 @@
-/*==================================================================================
-Copyright (c) 2008, binaryzebra
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-* Neither the name of the binaryzebra nor the
-names of its contributors may be used to endorse or promote products
-derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
 #include "Renderer.h"
-#include "Render/PixelFormatDescriptor.h"
 #include "Render/RHI/rhi_ShaderCache.h"
 #include "Render/RHI/Common/dbg_StatSet.h"
 #include "Render/RHI/Common/rhi_Private.h"
@@ -35,15 +6,21 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "Render/Material/FXCache.h"
 #include "Render/DynamicBufferAllocator.h"
 #include "Render/GPUFamilyDescriptor.h"
-#include "Render/RenderCallbacks.h"
+#include "Render/PixelFormatDescriptor.h"
+#include "Render/Image/Image.h"
+#include "Render/Texture.h"
+#include "Concurrency/Mutex.h"
+#include "Concurrency/LockGuard.h"
+#include "Platform/DeviceInfo.h"
+#include "Debug/ProfilerGPU.h"
+#include "Debug/ProfilerOverlay.h"
+#include "VisibilityQueryResults.h"
 
 namespace DAVA
 {
-namespace Renderer
+namespace RendererDetails
 {
-namespace //for private variables
-{
-bool ininialized = false;
+bool initialized = false;
 rhi::Api api;
 int32 desiredFPS = 60;
 
@@ -52,27 +29,64 @@ DynamicBindings dynamicBindings;
 RuntimeTextures runtimeTextures;
 RenderStats stats;
 
-int32 framebufferWidth;
-int32 framebufferHeight;
+rhi::ResetParam resetParams;
 
-ScreenShotCallbackDelegate* screenshotCallback = nullptr;
+RenderSignals signals;
+Mutex restoreMutex;
+Mutex postRestoreMutex;
+bool restoreInProgress = false;
+
+struct SyncCallback
+{
+    rhi::HSyncObject syncObject;
+    Token callbackToken;
+    Function<void(rhi::HSyncObject)> callback;
+};
+
+Vector<SyncCallback> syncCallbacks;
+
+void ProcessSignals()
+{
+    using namespace RendererDetails;
+
+    if (rhi::NeedRestoreResources())
+    {
+        restoreInProgress = true;
+        LockGuard<Mutex> lock(restoreMutex);
+        signals.needRestoreResources.Emit();
+    }
+    else if (restoreInProgress)
+    {
+        LockGuard<Mutex> lock(postRestoreMutex);
+        signals.restoreResoucesCompleted.Emit();
+        restoreInProgress = false;
+    }
+
+    for (size_t i = 0, sz = syncCallbacks.size(); i < sz;)
+    {
+        if (rhi::SyncObjectSignaled(syncCallbacks[i].syncObject))
+        {
+            syncCallbacks[i].callback(syncCallbacks[i].syncObject);
+            RemoveExchangingWithLast(syncCallbacks, i);
+            --sz;
+        }
+        else
+        {
+            ++i;
+        }
+    }
+}
 }
 
-static Mutex renderCmdExecSync;
-
+namespace Renderer
+{
 void Initialize(rhi::Api _api, rhi::InitParam& params)
 {
-    DVASSERT(!ininialized);
+    using namespace RendererDetails;
+
+    DVASSERT(!initialized);
 
     api = _api;
-
-    framebufferWidth = static_cast<int32>(params.width * params.scaleX);
-    framebufferHeight = static_cast<int32>(params.height * params.scaleY);
-
-    if (nullptr == params.FrameCommandExecutionSync)
-    {
-        params.FrameCommandExecutionSync = &renderCmdExecSync;
-    }
 
     rhi::Initialize(api, params);
     rhi::ShaderCache::Initialize();
@@ -80,104 +94,144 @@ void Initialize(rhi::Api _api, rhi::InitParam& params)
     FXCache::Initialize();
     PixelFormatDescriptor::SetHardwareSupportedFormats();
 
-    ininialized = true;
+    resetParams.width = params.width;
+    resetParams.height = params.height;
+    resetParams.vsyncEnabled = params.vsyncEnabled;
+    resetParams.window = params.window;
+    resetParams.fullScreen = params.fullScreen;
+
+    initialized = true;
+
+    //must be called after setting initialized in true
+    Vector<eGPUFamily> gpuLoadingOrder;
+    gpuLoadingOrder.push_back(DeviceInfo::GetGPUFamily());
+#if defined(__DAVAENGINE_ANDROID__)
+    if (gpuLoadingOrder[0] != eGPUFamily::GPU_MALI)
+    {
+        gpuLoadingOrder.push_back(eGPUFamily::GPU_MALI);
+    }
+#endif //android
+
+    Texture::SetGPULoadingOrder(gpuLoadingOrder);
 }
 
 void Uninitialize()
 {
-    DVASSERT(ininialized);
+    DVASSERT(RendererDetails::initialized);
 
+    VisibilityQueryResults::Cleanup();
     FXCache::Uninitialize();
     ShaderDescriptorCache::Uninitialize();
     rhi::ShaderCache::Unitialize();
     rhi::Uninitialize();
-    ininialized = false;
+    RendererDetails::initialized = false;
 }
 
 bool IsInitialized()
 {
-    return ininialized;
+    return RendererDetails::initialized;
 }
 
 void Reset(const rhi::ResetParam& params)
 {
-    framebufferWidth = static_cast<int32>(params.width * params.scaleX);
-    framebufferHeight = static_cast<int32>(params.height * params.scaleY);
+    RendererDetails::resetParams = params;
 
     rhi::Reset(params);
 }
 
-bool IsDeviceLost()
-{
-    DVASSERT(ininialized);
-    return false;
-}
-
 rhi::Api GetAPI()
 {
-    DVASSERT(ininialized);
-    return api;
+    DVASSERT(RendererDetails::initialized);
+    return RendererDetails::api;
 }
 
 int32 GetDesiredFPS()
 {
-    return desiredFPS;
+    return RendererDetails::desiredFPS;
 }
 
 void SetDesiredFPS(int32 fps)
 {
-    desiredFPS = fps;
+    RendererDetails::desiredFPS = fps;
+}
+
+void SetVSyncEnabled(bool enable)
+{
+    if (RendererDetails::resetParams.vsyncEnabled != enable)
+    {
+        RendererDetails::resetParams.vsyncEnabled = enable;
+        rhi::Reset(RendererDetails::resetParams);
+    }
+}
+
+bool IsVSyncEnabled()
+{
+    return RendererDetails::resetParams.vsyncEnabled;
 }
 
 RenderOptions* GetOptions()
 {
-    DVASSERT(ininialized);
-    return &renderOptions;
+    DVASSERT(RendererDetails::initialized);
+    return &RendererDetails::renderOptions;
 }
 
 DynamicBindings& GetDynamicBindings()
 {
-    return dynamicBindings;
+    return RendererDetails::dynamicBindings;
 }
 
 RuntimeTextures& GetRuntimeTextures()
 {
-    return runtimeTextures;
+    return RendererDetails::runtimeTextures;
 }
 
 RenderStats& GetRenderStats()
 {
-    return stats;
+    return RendererDetails::stats;
+}
+
+RenderSignals& GetSignals()
+{
+    return RendererDetails::signals;
 }
 
 int32 GetFramebufferWidth()
 {
-    return framebufferWidth;
+    return static_cast<int32>(RendererDetails::resetParams.width);
 }
 
 int32 GetFramebufferHeight()
 {
-    return framebufferHeight;
-}
-
-void RequestGLScreenShot(ScreenShotCallbackDelegate* _screenShotCallback)
-{
-    screenshotCallback = _screenShotCallback;
-    //RHI_COMPLETE
+    return static_cast<int32>(RendererDetails::resetParams.height);
 }
 
 void BeginFrame()
 {
-    StatSet::ResetAll();
+    RendererDetails::ProcessSignals();
 
-    RenderCallbacks::ProcessFrame();
     DynamicBufferAllocator::BeginFrame();
 }
 
 void EndFrame()
 {
+    using namespace RendererDetails;
+
+    VisibilityQueryResults::EndFrame();
     DynamicBufferAllocator::EndFrame();
+
+    if (ProfilerOverlay::globalProfilerOverlay)
+        ProfilerOverlay::globalProfilerOverlay->OnFrameEnd();
+
+    if (ProfilerGPU::globalProfiler)
+        ProfilerGPU::globalProfiler->OnFrameEnd();
+
     rhi::Present();
+
+    for (uint32 i = 0; i < uint32(VisibilityQueryResults::QUERY_INDEX_COUNT); ++i)
+    {
+        VisibilityQueryResults::eQueryIndex queryIndex = VisibilityQueryResults::eQueryIndex(i);
+        stats.visibilityQueryResults[VisibilityQueryResults::GetQueryIndexName(queryIndex)] = VisibilityQueryResults::GetResult(queryIndex);
+    }
 
     stats.drawIndexedPrimitive = StatSet::StatValue(rhi::stat_DIP);
     stats.drawPrimitive = StatSet::StatValue(rhi::stat_DP);
@@ -195,7 +249,31 @@ void EndFrame()
     stats.primitiveTriangleStripCount = StatSet::StatValue(rhi::stat_DTS);
     stats.primitiveLineListCount = StatSet::StatValue(rhi::stat_DLL);
 }
+
+Token RegisterSyncCallback(rhi::HSyncObject syncObject, Function<void(rhi::HSyncObject)> callback)
+{
+    Token token = TokenProvider<rhi::HSyncObject>::Generate();
+    RendererDetails::syncCallbacks.push_back({ syncObject, token, callback });
+
+    return token;
 }
+
+void UnRegisterSyncCallback(Token token)
+{
+    using namespace RendererDetails;
+
+    DVASSERT(TokenProvider<rhi::HSyncObject>::IsValid(token));
+    for (size_t i = 0, sz = syncCallbacks.size(); i < sz; ++i)
+    {
+        if (syncCallbacks[i].callbackToken == token)
+        {
+            RemoveExchangingWithLast(syncCallbacks, i);
+            break;
+        }
+    }
+}
+
+} //ns Renderer
 
 void RenderStats::Reset()
 {
@@ -222,5 +300,9 @@ void RenderStats::Reset()
     packets2d = 0U;
 
     visibleRenderObjects = 0U;
+    occludedRenderObjects = 0U;
+
+    visibilityQueryResults.clear();
 }
-}
+
+} //ns DAVA

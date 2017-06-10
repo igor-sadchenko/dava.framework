@@ -1,34 +1,6 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include <Functional/Function.h>
 #include <Debug/DVAssert.h>
+#include <Concurrency/Atomic.h>
 #include <Concurrency/LockGuard.h>
 
 #include <Network/Base/IOLoop.h>
@@ -40,8 +12,7 @@ namespace DAVA
 {
 namespace Net
 {
-
-Atomic<uint32> ProtoDriver::nextPacketId;
+ProtoDriver::Channel::~Channel() = default;
 
 ProtoDriver::ProtoDriver(IOLoop* aLoop, eNetworkRole aRole, const ServiceRegistrar& aRegistrar, void* aServiceContext)
     : loop(aLoop)
@@ -58,7 +29,6 @@ ProtoDriver::ProtoDriver(IOLoop* aLoop, eNetworkRole aRole, const ServiceRegistr
 
 ProtoDriver::~ProtoDriver()
 {
-
 }
 
 void ProtoDriver::SetTransport(IClientTransport* aTransport, const uint32* sourceChannels, size_t channelCount)
@@ -67,7 +37,7 @@ void ProtoDriver::SetTransport(IClientTransport* aTransport, const uint32* sourc
 
     transport = aTransport;
     channels.reserve(channelCount);
-    for (size_t i = 0;i < channelCount;++i)
+    for (size_t i = 0; i < channelCount; ++i)
     {
         channels.push_back(Channel(sourceChannels[i], this));
     }
@@ -99,7 +69,7 @@ void ProtoDriver::SendControl(uint32 code, uint32 channelId, uint32 packetId)
 {
     ProtoHeader header;
     proto.EncodeControlFrame(&header, code, channelId, packetId);
-    if (true == senderLock.TryLock())   // Control frame can be sent directly without queueing
+    if (true == senderLock.TryLock()) // Control frame can be sent directly without queueing
     {
         curControl = header;
         SendCurControl();
@@ -113,7 +83,7 @@ void ProtoDriver::SendControl(uint32 code, uint32 channelId, uint32 packetId)
 
 void ProtoDriver::ReleaseServices()
 {
-    for (size_t i = 0, n = channels.size();i < n;++i)
+    for (size_t i = 0, n = channels.size(); i < n; ++i)
     {
         if (channels[i].service != NULL)
         {
@@ -128,7 +98,7 @@ void ProtoDriver::OnConnected(const Endpoint& endp)
     if (SERVER_ROLE == role)
     {
         // In SERVER_ROLE only setup remote endpoints
-        for (size_t i = 0, n = channels.size();i < n;++i)
+        for (size_t i = 0, n = channels.size(); i < n; ++i)
         {
             channels[i].remoteEndpoint = endp;
         }
@@ -136,7 +106,7 @@ void ProtoDriver::OnConnected(const Endpoint& endp)
     else
     {
         // In CLIENT_ROLE ask server for services
-        for (size_t i = 0, n = channels.size();i < n;++i)
+        for (size_t i = 0, n = channels.size(); i < n; ++i)
         {
             channels[i].remoteEndpoint = endp;
             channels[i].service = registrar.Create(channels[i].channelId, serviceContext);
@@ -150,7 +120,7 @@ void ProtoDriver::OnConnected(const Endpoint& endp)
 
 void ProtoDriver::OnDisconnected(const char* message)
 {
-    for (size_t i = 0, n = channels.size();i < n;++i)
+    for (size_t i = 0, n = channels.size(); i < n; ++i)
     {
         if (channels[i].service != NULL && true == channels[i].confirmed)
         {
@@ -167,11 +137,12 @@ bool ProtoDriver::OnDataReceived(const void* buffer, size_t length)
     ProtoDecoder::DecodeResult result;
     ProtoDecoder::eDecodeStatus status = ProtoDecoder::DECODE_INVALID;
     pendingPong = false;
-    do {
+    do
+    {
         status = proto.Decode(buffer, length, &result);
         if (ProtoDecoder::DECODE_OK == status)
         {
-            switch(result.type)
+            switch (result.type)
             {
             case TYPE_DATA:
                 canContinue = ProcessDataPacket(&result);
@@ -214,23 +185,22 @@ void ProtoDriver::OnSendComplete()
         if (curPacket.sentLength == curPacket.dataLength)
         {
             Channel* ch = GetChannel(curPacket.channelId);
-
             ch->service->OnPacketSent(ch, curPacket.data, curPacket.dataLength);
             curPacket.data = NULL;
         }
     }
 
-    if (true == DequeueControl(&curControl))    // First send control packets if any
+    if (true == DequeueControl(&curControl)) // First send control packets if any
     {
         SendCurControl();
     }
-    else if (curPacket.data != NULL || true == DequeuePacket(&curPacket))   // Send current packet further or send new packet
+    else if (curPacket.data != NULL || true == DequeuePacket(&curPacket)) // Send current packet further or send new packet
     {
         SendCurPacket();
     }
     else
     {
-        senderLock.Unlock();    // Nothing to send, unlock sender
+        senderLock.Unlock(); // Nothing to send, unlock sender
     }
 }
 
@@ -253,7 +223,6 @@ bool ProtoDriver::ProcessDataPacket(ProtoDecoder::DecodeResult* result)
         // Send back delivery confirmation
         SendControl(TYPE_DELIVERY_ACK, result->channelId, result->packetId);
         ch->service->OnPacketReceived(ch, result->data, result->dataSize);
-
         return true;
     }
     DVASSERT(0);
@@ -272,7 +241,8 @@ bool ProtoDriver::ProcessChannelQuery(ProtoDecoder::DecodeResult* result)
         {
             ch->service = registrar.Create(ch->channelId, serviceContext);
             uint32 code = ch->service != NULL ? TYPE_CHANNEL_ALLOW
-                                              : TYPE_CHANNEL_DENY;
+                                                :
+                                                TYPE_CHANNEL_DENY;
             SendControl(code, result->channelId, 0);
             if (ch->service != NULL)
             {
@@ -283,7 +253,7 @@ bool ProtoDriver::ProcessChannelQuery(ProtoDecoder::DecodeResult* result)
         }
         return false;
     }
-    return true;    // Nothing strange that queried channel is not found
+    return true; // Nothing strange that queried channel is not found
 }
 
 bool ProtoDriver::ProcessChannelAllow(ProtoDecoder::DecodeResult* result)
@@ -309,7 +279,6 @@ bool ProtoDriver::ProcessChannelDeny(ProtoDecoder::DecodeResult* result)
     Channel* ch = GetChannel(result->channelId);
     if (ch != NULL && ch->service != NULL)
     {
-        // Call OnChannelClosed when remote peer cannot provide service
         ch->service->OnChannelClosed(ch, "Remote service is unavailable");
         return true;
     }
@@ -343,9 +312,10 @@ void ProtoDriver::ClearQueues()
     {
         Channel* ch = GetChannel(curPacket.channelId);
         ch->service->OnPacketSent(ch, curPacket.data, curPacket.dataLength);
+
         curPacket.data = NULL;
     }
-    for (Deque<Packet>::iterator i = dataQueue.begin(), e = dataQueue.end();i != e;++i)
+    for (Deque<Packet>::iterator i = dataQueue.begin(), e = dataQueue.end(); i != e; ++i)
     {
         Packet& packet = *i;
         Channel* ch = GetChannel(packet.channelId);
@@ -383,6 +353,8 @@ void ProtoDriver::SendCurControl()
 
 void ProtoDriver::PreparePacket(Packet* packet, uint32 channelId, const void* buffer, size_t length)
 {
+    static Atomic<uint32> nextPacketId{ 0 };
+
     DVASSERT(buffer != NULL && length > 0);
 
     packet->channelId = channelId;
@@ -427,5 +399,5 @@ bool ProtoDriver::DequeueControl(ProtoHeader* dest)
     return false;
 }
 
-}   // namespace Net
-}   // namespace DAVA
+} // namespace Net
+} // namespace DAVA

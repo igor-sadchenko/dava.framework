@@ -1,61 +1,32 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __DAVAENGINE_UI_PARTICLES__
 #define __DAVAENGINE_UI_PARTICLES__
 
 #include "UI/UIControl.h"
+#include "Reflection/Reflection.h"
 
-namespace DAVA 
+namespace DAVA
 {
-
 class ParticleEffectComponent;
 class ParticleEffectSystem;
 class Camera;
 
-class UIParticles : public UIControl 
+class UIParticles : public UIControl
 {
+    DAVA_VIRTUAL_REFLECTION(UIParticles, UIControl);
+
 protected:
     virtual ~UIParticles();
+
 public:
-    UIParticles(const Rect &rect = Rect());
+    UIParticles(const Rect& rect = Rect());
 
     void Update(float32 timeElapsed) override;
-    void Draw(const UIGeometricData &geometricData) override;
+    void Draw(const UIGeometricData& geometricData) override;
 
-    void WillAppear() override;
+    void OnActive() override;
 
     UIParticles* Clone() override;
-    void CopyDataFrom(UIControl *srcControl) override;
-
-    void LoadFromYamlNode(const YamlNode * node, UIYamlLoader * loader) override;
-    YamlNode* SaveToYamlNode(UIYamlLoader * loader) override;
+    void CopyDataFrom(UIControl* srcControl) override;
 
     /*methods analogical to once in ParticleEffectComponent*/
     void Start();
@@ -78,6 +49,9 @@ public:
 
     //external
     void SetExtertnalValue(const String& name, float32 value);
+
+    void SetInheritControlTransform(bool inherit);
+    bool GetInheritControlTransform() const;
 
 protected:
     void LoadEffect(const FilePath& path);
@@ -102,28 +76,22 @@ protected:
 
 private:
     FilePath effectPath;
-    bool isAutostart;
-    float32 startDelay;
+    bool isAutostart = false;
+    float32 startDelay = 0.f;
 
-    ParticleEffectComponent *effect;
-    ParticleEffectSystem *system;
+    ParticleEffectComponent* effect = nullptr;
+    ParticleEffectSystem* system = nullptr;
     Matrix4 matrix;
-    float32 updateTime;
+    float32 updateTime = 0.f;
 
-    eDelayedActionType delayedActionType;
-    float32 delayedActionTime;
-    bool delayedDeleteAllParticles;
-    bool needHandleAutoStart;
+    eDelayedActionType delayedActionType = actionNone;
+    float32 delayedActionTime = 0.f;
+    bool delayedDeleteAllParticles = false;
+    bool needHandleAutoStart = false;
+    bool inheritControlTransform = true;
 
-    static Camera *defaultCamera;
-public:
-    INTROSPECTION_EXTEND(UIParticles, UIControl,
-        PROPERTY("effectPath", "Effect path", GetEffectPath, SetEffectPath, I_SAVE | I_VIEW | I_EDIT)
-        PROPERTY("autoStart", "Auto start", IsAutostart, SetAutostart, I_SAVE | I_VIEW | I_EDIT)
-        PROPERTY("startDelay", "Start delay", GetStartDelay, SetStartDelay, I_SAVE | I_VIEW | I_EDIT)
-    );
+    static Camera* defaultCamera;
 };
-	
 };
 
 #endif

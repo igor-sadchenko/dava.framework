@@ -1,126 +1,131 @@
-/*==================================================================================
- Copyright (c) 2008, binaryzebra
- All rights reserved.
- 
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
- 
- * Redistributions of source code must retain the above copyright
- notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
- notice, this list of conditions and the following disclaimer in the
- documentation and/or other materials provided with the distribution.
- * Neither the name of the binaryzebra nor the
- names of its contributors may be used to endorse or promote products
- derived from this software without specific prior written permission.
- 
- THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
- DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- =====================================================================================*/
-
 #include "Scene3D/SceneUtils.h"
 
+#include "Utils/StringFormat.h"
 #include "Render/Highlevel/RenderObject.h"
 #include "Render/Highlevel/RenderBatch.h"
 #include "Render/Highlevel/Mesh.h"
 #include "Scene3D/Entity.h"
 #include "Entity/Component.h"
 #include "Scene3D/Components/AnimationComponent.h"
-#include "Scene3D/Components/LodComponent.h"
+#include "Scene3D/Lod/LodComponent.h"
 #include "Scene3D/Components/TransformComponent.h"
 #include "Scene3D/Components/ComponentHelpers.h"
 #include "Scene3D/Components/RenderComponent.h"
+#include "Logger/Logger.h"
+#include "Base/Map.h"
 
 namespace DAVA
 {
-    
 namespace SceneUtils
 {
-
-void CombineLods(Scene * scene)
+bool CombineLods(Scene* scene)
 {
+    bool result = true;
     for (auto child : scene->children)
     {
-        CombineEntityLods(child);
+        result = result && CombineEntityLods(child);
     }
+
+    return result;
 }
 
-String LodNameForIndex(const String & pattern, uint32 lodIndex)
+String LodNameForIndex(const String& pattern, uint32 lodIndex)
 {
     return Format(pattern.c_str(), lodIndex);
 }
 
-void CombineEntityLods(Entity * forRootNode)
+bool VerifyNames(const List<Entity*>& lodNodes, const String& lodSubString)
+{
+    bool allNamesAreDifferent = true;
+
+    Map<String, String> validationMap;
+    for (Entity* oneLodNode : lodNodes)
+    {
+        const String lodName(oneLodNode->GetName().c_str());
+        const String nodeWithoutLodsName(lodName, 0, lodName.find(lodSubString));
+
+        if (validationMap.count(nodeWithoutLodsName) != 0)
+        {
+            Logger::Error("Geometry Error: %s will overwrite geometry of %s", lodName.c_str(), validationMap[nodeWithoutLodsName].c_str());
+            allNamesAreDifferent = false;
+        }
+        else
+        {
+            validationMap[nodeWithoutLodsName] = lodName;
+        }
+    }
+
+    return allNamesAreDifferent;
+}
+
+bool CombineEntityLods(Entity* forRootNode)
 {
     const String lodNamePattern("_lod%d");
     const String dummyLodNamePattern("_lod%ddummy");
-    
-    List<Entity *> lodNodes;
-    
+
+    List<Entity*> lodNodes;
+
     // try to find nodes which have lodNamePattrn.
     const String lod0 = LodNameForIndex(lodNamePattern, 0);
     if (!forRootNode->FindNodesByNamePart(lod0, lodNodes))
     {
         // There is no lods.
-        return;
+        return true;
     }
-    
+
+    //model validation step: we should ignore combination of lods if we found several geometry meshes per lod
+    if (VerifyNames(lodNodes, lod0) == false)
+    {
+        return false;
+    }
+
     // ok. We have some nodes with lod 0 in the name. Try to find other lods for same name.
-    for (Entity * oneLodNode : lodNodes)
+    for (Entity* oneLodNode : lodNodes)
     {
         // node name which contains lods
         const String lodName(oneLodNode->GetName().c_str());
         const String nodeWithLodsName(lodName, 0, lodName.find(lod0));
-        
-        Entity * oldParent = oneLodNode->GetParent();
-        
+
+        Entity* oldParent = oneLodNode->GetParent();
+
         ScopedPtr<Entity> newNodeWithLods(new Entity());
         newNodeWithLods->SetName(nodeWithLodsName.c_str());
-        
+
         ScopedPtr<Mesh> newMesh(new Mesh());
-        
-        uint32 lodCount = 0;
+
+        int32 lodCount = 0;
         for (int lodNo = 0; lodNo < LodComponent::MAX_LOD_LAYERS; ++lodNo)
         {
             // Try to find node with same name but with other lod
             const FastName lodIName(nodeWithLodsName + LodNameForIndex(lodNamePattern, lodNo));
-            Entity * ln = oldParent->FindByName(lodIName.c_str());
-            
+            Entity* ln = oldParent->FindByName(lodIName.c_str());
+
             // Lod found. Move render batches from entity to NewMesh as lod.
             if (nullptr != ln)
             {
                 CollapseRenderBatchesRecursiveAsLod(ln, lodNo, newMesh);
                 CollapseAnimationsUpToFarParent(ln, newNodeWithLods);
-                
+
                 oldParent->RemoveNode(ln);
-                
+
                 ++lodCount;
             }
 
             // Try to find dummy lod node
             const FastName dummyLodName(nodeWithLodsName + LodNameForIndex(dummyLodNamePattern, lodNo));
             ln = oldParent->FindByName(dummyLodName.c_str());
-            
+
             if (nullptr != ln)
             {
                 // Remove dummy nodes
                 ln->RemoveAllChildren();
                 oldParent->RemoveNode(ln);
             }
-            
         }
-        
-        if (0 < lodCount)
+
+        if (lodCount > 0)
         {
-            LodComponent *lc = new LodComponent();
+            LodComponent* lc = new LodComponent();
             newNodeWithLods->AddComponent(lc);
             if (lodCount < LodComponent::MAX_LOD_LAYERS && lodCount > LodComponent::INVALID_LOD_LAYER)
             {
@@ -128,53 +133,54 @@ void CombineEntityLods(Entity * forRootNode)
                 lc->SetLodLayerDistance(lodCount, LodComponent::MAX_LOD_DISTANCE);
             }
         }
-        
-        RenderComponent * rc = new RenderComponent();
+
+        RenderComponent* rc = new RenderComponent();
         rc->SetRenderObject(newMesh);
-        
+
         newNodeWithLods->AddComponent(rc);
         oldParent->AddNode(newNodeWithLods);
-        
+
         DVASSERT(oldParent->GetScene());
         DVASSERT(newNodeWithLods->GetScene());
     }
+
+    return true;
 }
 
-
-void BakeTransformsUpToFarParent(Entity * parent, Entity * currentNode)
+void BakeTransformsUpToFarParent(Entity* parent, Entity* currentNode)
 {
     for (auto child : currentNode->children)
     {
         BakeTransformsUpToFarParent(parent, child);
     }
-    
+
     // Bake transforms to geometry
-    RenderObject * ro = GetRenderObject(currentNode);
+    RenderObject* ro = GetRenderObject(currentNode);
     if (ro)
     {
         // Get actual transformation for current entity
         Matrix4 totalTransform = currentNode->AccamulateTransformUptoFarParent(parent);
         ro->BakeGeometry(totalTransform);
     }
-    
+
     // Set local transform as Ident because transform is already baked up into geometry
     auto transformComponent = GetTransformComponent(currentNode);
     transformComponent->SetLocalTransform(&Matrix4::IDENTITY);
 }
 
-void CollapseRenderBatchesRecursiveAsLod(Entity * node, uint32 lod, RenderObject * ro)
+void CollapseRenderBatchesRecursiveAsLod(Entity* node, uint32 lod, RenderObject* ro)
 {
     for (auto child : node->children)
     {
         CollapseRenderBatchesRecursiveAsLod(child, lod, ro);
     }
-    
-    RenderObject * lodRenderObject = GetRenderObject(node);
+
+    RenderObject* lodRenderObject = GetRenderObject(node);
     if (nullptr != lodRenderObject)
     {
         while (lodRenderObject->GetRenderBatchCount() > 0)
         {
-            RenderBatch * batch = lodRenderObject->GetRenderBatch(0);
+            RenderBatch* batch = lodRenderObject->GetRenderBatch(0);
             batch->Retain();
             lodRenderObject->RemoveRenderBatch(batch);
             ro->AddRenderBatch(batch, lod, -1);
@@ -183,14 +189,14 @@ void CollapseRenderBatchesRecursiveAsLod(Entity * node, uint32 lod, RenderObject
     }
 }
 
-void CollapseAnimationsUpToFarParent(Entity * node, Entity * parent)
+void CollapseAnimationsUpToFarParent(Entity* node, Entity* parent)
 {
     for (auto child : parent->children)
     {
         CollapseAnimationsUpToFarParent(child, parent);
     }
-    
-    Component * ac = GetAnimationComponent(node);
+
+    Component* ac = GetAnimationComponent(node);
     if (ac)
     {
         node->DetachComponent(ac);
@@ -199,5 +205,5 @@ void CollapseAnimationsUpToFarParent(Entity * node, Entity * parent)
 }
 
 } //namespace SceneUtils
-    
+
 } //namespace DAVA

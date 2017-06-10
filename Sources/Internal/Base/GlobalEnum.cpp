@@ -1,33 +1,5 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Base/GlobalEnum.h"
+#include "Engine/EngineTypes.h"
 #include "Render/Texture.h"
 #include "Render/Highlevel/Light.h"
 #include "Scene3D/Entity.h"
@@ -42,9 +14,14 @@
 #include "UI/Layouts/UISizePolicyComponent.h"
 #include "UI/Layouts/UILinearLayoutComponent.h"
 #include "UI/Layouts/UIFlowLayoutComponent.h"
-#include "FileSystem/Logger.h"
+#include "UI/Focus/UIFocusComponent.h"
+#include "UI/UIEvent.h"
+#include "Input/KeyboardShortcut.h"
+#include "Logger/Logger.h"
 #include "UI/UIWebView.h"
 #include "Render/RHI/rhi_Type.h"
+#include "Render/Highlevel/BillboardRenderObject.h"
+#include "Utils/BiDiHelper.h"
 
 using namespace DAVA;
 
@@ -57,6 +34,7 @@ ENUM_DECLARE(eGPUFamily)
     ENUM_ADD_DESCR(GPU_ADRENO, "adreno");
     ENUM_ADD_DESCR(GPU_DX11, "dx11");
     ENUM_ADD_DESCR(GPU_ORIGIN, "origin");
+    ENUM_ADD_DESCR(GPU_FAMILY_COUNT, "all GPU");
 }
 
 ENUM_DECLARE(Logger::eLogLevel)
@@ -81,6 +59,14 @@ ENUM_DECLARE(PixelFormat)
     ENUM_ADD_DESCR(FORMAT_PVR2, "PVR2");
     ENUM_ADD_DESCR(FORMAT_RGBA16161616, "RGBA16161616");
     ENUM_ADD_DESCR(FORMAT_RGBA32323232, "RGBA32323232");
+    ENUM_ADD_DESCR(FORMAT_R16F, "R16F");
+    ENUM_ADD_DESCR(FORMAT_RG16F, "RG16F");
+    ENUM_ADD_DESCR(FORMAT_RGB16F, "RGB16F");
+    ENUM_ADD_DESCR(FORMAT_RGBA16F, "RGBA16F");
+    ENUM_ADD_DESCR(FORMAT_R32F, "R32F");
+    ENUM_ADD_DESCR(FORMAT_RG32F, "RG32F");
+    ENUM_ADD_DESCR(FORMAT_RGB32F, "RGB32F");
+    ENUM_ADD_DESCR(FORMAT_RGBA32F, "RGBA32F");
     ENUM_ADD_DESCR(FORMAT_DXT1, "DXT1");
     ENUM_ADD_DESCR(FORMAT_DXT1A, "DXT1A");
     ENUM_ADD_DESCR(FORMAT_DXT3, "DXT3");
@@ -100,6 +86,19 @@ ENUM_DECLARE(PixelFormat)
     ENUM_ADD_DESCR(FORMAT_ETC2_RGB, "ETC2_RGB");
     ENUM_ADD_DESCR(FORMAT_ETC2_RGBA, "ETC2_RGBA");
     ENUM_ADD_DESCR(FORMAT_ETC2_RGB_A1, "ETC2_RGB_A1");
+}
+
+ENUM_DECLARE(ImageFormat)
+{
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_PNG, "PNG");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_DDS, "DDS");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_PVR, "PVR");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_JPEG, "JPEG");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_TGA, "TGA");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_WEBP, "WEBP");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_PSD, "PSD");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_HDR, "HDR");
+    ENUM_ADD_DESCR(ImageFormat::IMAGE_FORMAT_UNKNOWN, "Unknown");
 }
 
 ENUM_DECLARE(Light::eType)
@@ -184,6 +183,7 @@ ENUM_DECLARE(UIControlBackground::eDrawType)
     ENUM_ADD_DESCR(UIControlBackground::DRAW_STRETCH_VERTICAL, "DRAW_STRETCH_VERTICAL");
     ENUM_ADD_DESCR(UIControlBackground::DRAW_STRETCH_BOTH, "DRAW_STRETCH_BOTH");
     ENUM_ADD_DESCR(UIControlBackground::DRAW_TILED, "DRAW_TILED");
+    ENUM_ADD_DESCR(UIControlBackground::DRAW_TILED_MULTILAYER, "DRAW_TILED_MULTILAYER");
 }
 
 ENUM_DECLARE(eAlign)
@@ -214,6 +214,12 @@ ENUM_DECLARE(UIControlBackground::ePerPixelAccuracyType)
     ENUM_ADD_DESCR(UIControlBackground::PER_PIXEL_ACCURACY_FORCED, "PER_PIXEL_ACCURACY_FORCED");
 };
 
+ENUM_DECLARE(eSpriteModification)
+{
+    ENUM_ADD_DESCR(eSpriteModification::ESM_HFLIP, "FLIP_HORIZONTAL");
+    ENUM_ADD_DESCR(eSpriteModification::ESM_VFLIP, "FLIP_VERTICAL");
+};
+
 ENUM_DECLARE(UIStaticText::eMultiline)
 {
     ENUM_ADD_DESCR(UIStaticText::MULTILINE_DISABLED, "MULTILINE_DISABLED");
@@ -223,7 +229,6 @@ ENUM_DECLARE(UIStaticText::eMultiline)
 
 ENUM_DECLARE(TextBlock::eFitType)
 {
-    ENUM_ADD_DESCR(TextBlock::FITTING_DISABLED, "DISABLED");
     ENUM_ADD_DESCR(TextBlock::FITTING_ENLARGE, "ENLARGE");
     ENUM_ADD_DESCR(TextBlock::FITTING_REDUCE, "REDUCE");
     ENUM_ADD_DESCR(TextBlock::FITTING_POINTS, "POINTS");
@@ -234,6 +239,14 @@ ENUM_DECLARE(TextBlock::eUseRtlAlign)
     ENUM_ADD_DESCR(TextBlock::RTL_DONT_USE, "DONT_USE");
     ENUM_ADD_DESCR(TextBlock::RTL_USE_BY_CONTENT, "USE_BY_CONTENT");
     ENUM_ADD_DESCR(TextBlock::RTL_USE_BY_SYSTEM, "USE_BY_SYSTEM");
+};
+
+ENUM_DECLARE(BiDiHelper::Direction)
+{
+    ENUM_ADD_DESCR(BiDiHelper::RTL, "RTL");
+    ENUM_ADD_DESCR(BiDiHelper::LTR, "LTR");
+    ENUM_ADD_DESCR(BiDiHelper::NEUTRAL, "NEUTRAL");
+    ENUM_ADD_DESCR(BiDiHelper::MIXED, "MIXED");
 };
 
 ENUM_DECLARE(UIList::eListOrientation)
@@ -305,6 +318,18 @@ ENUM_DECLARE(UITextField::eReturnKeyType)
     ENUM_ADD_DESCR(UITextField::RETURN_KEY_EMERGENCY_CALL, "RETURN_KEY_EMERGENCY_CALL");
 };
 
+ENUM_DECLARE(UITextField::eStartEditPolicy)
+{
+    ENUM_ADD_DESCR(UITextField::START_EDIT_WHEN_FOCUSED, "WhenFocused");
+    ENUM_ADD_DESCR(UITextField::START_EDIT_BY_USER_REQUEST, "ByUserRequest");
+};
+
+ENUM_DECLARE(UITextField::eStopEditPolicy)
+{
+    ENUM_ADD_DESCR(UITextField::STOP_EDIT_WHEN_FOCUS_LOST, "WhenFocusLost");
+    ENUM_ADD_DESCR(UITextField::STOP_EDIT_BY_USER_REQUEST, "ByUserRequest");
+};
+
 ENUM_DECLARE(UIComponent::eType)
 {
     ENUM_ADD_DESCR(UIComponent::LINEAR_LAYOUT_COMPONENT, "LinearLayout");
@@ -313,6 +338,27 @@ ENUM_DECLARE(UIComponent::eType)
     ENUM_ADD_DESCR(UIComponent::IGNORE_LAYOUT_COMPONENT, "IgnoreLayout");
     ENUM_ADD_DESCR(UIComponent::SIZE_POLICY_COMPONENT, "SizePolicy");
     ENUM_ADD_DESCR(UIComponent::ANCHOR_COMPONENT, "Anchor");
+    ENUM_ADD_DESCR(UIComponent::LAYOUT_SOURCE_RECT_COMPONENT, "UILayoutSourceRectComponent");
+    ENUM_ADD_DESCR(UIComponent::LAYOUT_ISOLATION_COMPONENT, "UILayoutIsolationComponent");
+    ENUM_ADD_DESCR(UIComponent::BACKGROUND_COMPONENT, "Background");
+    ENUM_ADD_DESCR(UIComponent::MODAL_INPUT_COMPONENT, "ModalInput");
+    ENUM_ADD_DESCR(UIComponent::FOCUS_COMPONENT, "Focus");
+    ENUM_ADD_DESCR(UIComponent::FOCUS_GROUP_COMPONENT, "FocusGroup");
+    ENUM_ADD_DESCR(UIComponent::NAVIGATION_COMPONENT, "Navigation");
+    ENUM_ADD_DESCR(UIComponent::TAB_ORDER_COMPONENT, "TabOrder");
+    ENUM_ADD_DESCR(UIComponent::ACTION_COMPONENT, "Action");
+    ENUM_ADD_DESCR(UIComponent::ACTION_BINDING_COMPONENT, "ActionBinding");
+    ENUM_ADD_DESCR(UIComponent::SCROLL_BAR_DELEGATE_COMPONENT, "ScrollBarDelegate");
+    ENUM_ADD_DESCR(UIComponent::SCROLL_COMPONENT, "ScrollComponent");
+    ENUM_ADD_DESCR(UIComponent::SOUND_COMPONENT, "Sound");
+    ENUM_ADD_DESCR(UIComponent::SOUND_VALUE_FILTER_COMPONENT, "SoundValueFilter");
+    ENUM_ADD_DESCR(UIComponent::UPDATE_COMPONENT, "Update");
+    ENUM_ADD_DESCR(UIComponent::CUSTOM_UPDATE_DELTA_COMPONENT, "CustomDeltaUpdate");
+    ENUM_ADD_DESCR(UIComponent::RICH_CONTENT_COMPONENT, "RichContent");
+    ENUM_ADD_DESCR(UIComponent::RICH_CONTENT_OBJECT_COMPONENT, "RichContentObject");
+    ENUM_ADD_DESCR(UIComponent::SCENE_COMPONENT, "SceneComponent");
+    ENUM_ADD_DESCR(UIComponent::DEBUG_RENDER_COMPONENT, "DebugRender");
+    ENUM_ADD_DESCR(UIComponent::CLIP_CONTENT_COMPONENT, "ClipContent");
 };
 
 ENUM_DECLARE(UISizePolicyComponent::eSizePolicy)
@@ -325,12 +371,15 @@ ENUM_DECLARE(UISizePolicyComponent::eSizePolicy)
     ENUM_ADD_DESCR(UISizePolicyComponent::PERCENT_OF_LAST_CHILD, "PercentOfLastChild");
     ENUM_ADD_DESCR(UISizePolicyComponent::PERCENT_OF_CONTENT, "PercentOfContent");
     ENUM_ADD_DESCR(UISizePolicyComponent::PERCENT_OF_PARENT, "PercentOfParent");
+    ENUM_ADD_DESCR(UISizePolicyComponent::FORMULA, "Formula");
 };
 
 ENUM_DECLARE(UILinearLayoutComponent::eOrientation)
 {
-    ENUM_ADD_DESCR(UILinearLayoutComponent::HORIZONTAL, "Horizontal");
-    ENUM_ADD_DESCR(UILinearLayoutComponent::VERTICAL, "Vertical");
+    ENUM_ADD_DESCR(UILinearLayoutComponent::LEFT_TO_RIGHT, "LeftToRight");
+    ENUM_ADD_DESCR(UILinearLayoutComponent::RIGHT_TO_LEFT, "RightToLeft");
+    ENUM_ADD_DESCR(UILinearLayoutComponent::TOP_DOWN, "TopDown");
+    ENUM_ADD_DESCR(UILinearLayoutComponent::BOTTOM_UP, "BottomUp");
 };
 
 ENUM_DECLARE(UIFlowLayoutComponent::eOrientation)
@@ -338,6 +387,24 @@ ENUM_DECLARE(UIFlowLayoutComponent::eOrientation)
     ENUM_ADD_DESCR(UIFlowLayoutComponent::ORIENTATION_LEFT_TO_RIGHT, "LeftToRight");
     ENUM_ADD_DESCR(UIFlowLayoutComponent::ORIENTATION_RIGHT_TO_LEFT, "RightToLeft");
 };
+
+#if defined(__DAVAENGINE_COREV2__)
+ENUM_DECLARE(eModifierKeys)
+{
+    ENUM_ADD_DESCR(static_cast<int>(eModifierKeys::SHIFT), "SHIFT");
+    ENUM_ADD_DESCR(static_cast<int>(eModifierKeys::CONTROL), "CTRL");
+    ENUM_ADD_DESCR(static_cast<int>(eModifierKeys::ALT), "ALT");
+    ENUM_ADD_DESCR(static_cast<int>(eModifierKeys::COMMAND), "CMD");
+};
+#else
+ENUM_DECLARE(UIEvent::Modifier)
+{
+    ENUM_ADD_DESCR(UIEvent::Modifier::SHIFT_DOWN, "SHIFT");
+    ENUM_ADD_DESCR(UIEvent::Modifier::CONTROL_DOWN, "CTRL");
+    ENUM_ADD_DESCR(UIEvent::Modifier::ALT_DOWN, "ALT");
+    ENUM_ADD_DESCR(UIEvent::Modifier::COMMAND_DOWN, "CMD");
+};
+#endif
 
 ENUM_DECLARE(rhi::TextureAddrMode)
 {
@@ -374,17 +441,17 @@ ENUM_DECLARE(UIWebView::eDataDetectorType)
     ENUM_ADD_DESCR(UIWebView::DATA_DETECTOR_CALENDAR_EVENTS, "CalendarEvents");
 };
 
-/*
-void f()
+ENUM_DECLARE(eGradientBlendMode)
 {
+    ENUM_ADD_DESCR(GRADIENT_MULTIPLY, "Multiply");
+    ENUM_ADD_DESCR(GRADIENT_BLEND, "Alpha blend");
+    ENUM_ADD_DESCR(GRADIENT_ADD, "Additive");
+    ENUM_ADD_DESCR(GRADIENT_SCREEN, "Screen");
+    ENUM_ADD_DESCR(GRADIENT_OVERLAY, "Overlay");
+};
+
+ENUM_DECLARE(BillboardRenderObject::BillboardType)
+{
+    ENUM_ADD_DESCR(BillboardRenderObject::BILLBOARD_SPHERICAL, "Spherical");
+    ENUM_ADD_DESCR(BillboardRenderObject::BILLBOARD_CYLINDRICAL, "Cylindrical");
 }
-
-GlobalEnum *globalEnum = GlobalEnum::Instance();
-f();
-*/
-/*
-->Add(DAVA::MetaInfo::Instance<DAVA::Texture::TextureWrap>(), DAVA::Texture::WRAP_CLAMP_TO_EDGE, "WRAP_CLAMP_TO_EDGE");
-
-ENUM_ADD(DAVA::Texture::TextureWrap, DAVA::Texture::WRAP_CLAMP_TO_EDGE, "WRAP_CLAMP_TO_EDGE");
-ENUM_ADD(DAVA::Texture::TextureWrap, DAVA::Texture::WRAP_REPEAT, "WRAP_REPEAT");
-*/

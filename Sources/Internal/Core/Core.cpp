@@ -1,40 +1,12 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
+#if !defined(__DAVAENGINE_COREV2__)
 
 #include "DAVAClassRegistrator.h"
-
 #include "FileSystem/FileSystem.h"
 #include "Base/ObjectFactory.h"
 #include "Core/ApplicationCore.h"
 #include "Core/Core.h"
 #include "Core/PerformanceSettings.h"
-#include "Platform/SystemTimer.h"
+#include "Time/SystemTimer.h"
 #include "UI/UIScreenManager.h"
 #include "UI/UIControlSystem.h"
 #include "Input/InputSystem.h"
@@ -43,33 +15,38 @@
 #include "Debug/Replay.h"
 #include "Sound/SoundSystem.h"
 #include "Sound/SoundEvent.h"
-#include "Input/InputSystem.h"
 #include "Platform/DPIHelper.h"
 #include "Base/AllocatorFactory.h"
 #include "Render/2D/FTFont.h"
 #include "Scene3D/SceneFile/VersionInfo.h"
 #include "Render/Image/ImageSystem.h"
-#include "Render/2D/Systems/VirtualCoordinatesSystem.h"
+#include "UI/UIControlSystem.h"
 #include "Render/2D/Systems/RenderSystem2D.h"
 #include "DLC/Downloader/DownloadManager.h"
 #include "DLC/Downloader/CurlDownloader.h"
-#include "Render/OcclusionQuery.h"
+#include "DLCManager/Private/DLCManagerImpl.h"
 #include "Notification/LocalNotificationController.h"
 #include "Platform/DeviceInfo.h"
 #include "Render/Renderer.h"
 #include "UI/UIControlSystem.h"
+#include "Engine/EngineSettings.h"
 
 #include "Network/NetCore.h"
 #include "MemoryManager/MemoryProfiler.h"
 
 #include "Job/JobManager.h"
 
+#include "Debug/ProfilerCPU.h"
+#include "Debug/ProfilerMarkerNames.h"
+
 #if defined(__DAVAENGINE_ANDROID__)
-#include "Platform/TemplateAndroid/AssetsManagerAndroid.h"
+#include <cfenv>
+#pragma STDC FENV_ACCESS on
 #endif
 
 #if defined(__DAVAENGINE_IPHONE__)
-// not used
+#include <cfenv>
+#pragma STDC FENV_ACCESS on
 #elif defined(__DAVAENGINE_ANDROID__)
 #include "Input/AccelerometerAndroid.h"
 #endif //PLATFORMS
@@ -83,27 +60,30 @@
 #endif
 
 #include "Concurrency/Thread.h"
-#include "Debug/Profiler.h"
 
 #include "Core.h"
-#define PROF__FRAME 0
-#define PROF__FRAME_UPDATE 1
-#define PROF__FRAME_DRAW 2
-#define PROF__FRAME_ENDFRAME 3
+#include "Platform/TemplateAndroid/AssetsManagerAndroid.h"
+#include "DLCManager/Private/DLCManagerImpl.h"
+#include "Analytics/Analytics.h"
 
 namespace DAVA
 {
 static ApplicationCore* core = nullptr;
 
 Core::Core()
-    : nativeView(nullptr)
 {
     globalFrameIndex = 1;
     isActive = false;
     firstRun = true;
-
     isConsoleMode = false;
     options = new KeyedArchive();
+    float32 defaultUserScale = 1.f;
+    if (nullptr != options)
+    {
+        defaultUserScale = options->GetFloat("userScreenScaleFactor", 1.0f);
+    }
+    screenMetrics.userScale = defaultUserScale;
+    screenOrientation = SCREEN_ORIENTATION_LANDSCAPE_RIGHT;
 }
 
 Core::~Core()
@@ -112,10 +92,114 @@ Core::~Core()
     SafeRelease(core);
 }
 
+namespace fpu_exceptions
+{
+#ifdef DAVA_ENGINE_DEBUG_FPU_EXCEPTIONS
+#ifdef __DAVAENGINE_WINDOWS__
+void (*SEFuncPtr)(unsigned int, PEXCEPTION_POINTERS) = nullptr;
+
+void SEHandler(unsigned int exceptionCode, PEXCEPTION_POINTERS pExpInfo)
+{
+    switch (exceptionCode)
+    {
+    case EXCEPTION_FLT_DENORMAL_OPERAND:
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:
+    case EXCEPTION_FLT_INEXACT_RESULT:
+    case EXCEPTION_FLT_INVALID_OPERATION:
+    case EXCEPTION_FLT_OVERFLOW:
+    case EXCEPTION_FLT_STACK_CHECK:
+    case EXCEPTION_FLT_UNDERFLOW:
+    // https://social.msdn.microsoft.com/Forums/en-US/48f63378-19be-413f-88a5-0f24aa72d3c8/the-exceptions-statusfloatmultipletraps-and-statusfloatmultiplefaults-is-needed-in-more
+    case STATUS_FLOAT_MULTIPLE_TRAPS:
+    case STATUS_FLOAT_MULTIPLE_FAULTS:
+    {
+        _clearfp();
+        StringStream ss;
+        ss << "floating-point structured exception: 0x" << std::hex << exceptionCode
+           << " at 0x" << pExpInfo->ExceptionRecord->ExceptionAddress;
+        DAVA_THROW(DAVA::Exception, ss.str());
+    }
+    default:
+        if (SEFuncPtr != nullptr)
+        {
+            SEFuncPtr(exceptionCode, pExpInfo);
+        }
+        else
+        {
+            StringStream ss;
+            ss << "structured exception: 0x" << std::hex << exceptionCode
+               << " at 0x" << pExpInfo->ExceptionRecord->ExceptionAddress;
+            DAVA_THROW(DAVA::Exception, ss.str());
+        }
+    }
+};
+
+void EnableFloatingPointExceptions()
+{
+    // https://msdn.microsoft.com/en-us/library/5z4bw5h5.aspx
+    fpu_exceptions::SEFuncPtr = _set_se_translator(&fpu_exceptions::SEHandler);
+
+    unsigned int feValue = ~(_EM_INVALID | /*_EM_DENORMAL |*/ _EM_ZERODIVIDE | _EM_OVERFLOW | _EM_UNDERFLOW /* | _EM_INEXACT*/);
+    unsigned int mask = _MCW_EM;
+    unsigned int currentWord = 0;
+    errno_t err = _controlfp_s(&currentWord, 0, 0);
+    DVASSERT(err == 0);
+    // https://msdn.microsoft.com/en-us/library/c9676k6h.aspx
+    err = _controlfp_s(&currentWord, feValue, mask);
+    DVASSERT(err == 0);
+    Logger::FrameworkDebug("FPU exceptions enabled");
+}
+#else // __DAVAENGINE_WINDOWS__
+void EnableFloatingPointExceptions()
+{
+// https://gcc.gnu.org/onlinedocs/gcc/Code-Gen-Options.html
+// http://en.cppreference.com/w/cpp/numeric/fenv
+// on iOS better in debug add flag -fsanitize=undefined
+#ifdef __DAVAENGINE_ANDROID__
+#ifndef FE_NOMASK_ENV
+    Logger::FrameworkDebug("FPU exceptions not supported");
+    // still try
+    int result = feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW /* | FE_INEXACT */);
+    DVASSERT(result != -1);
+#else
+    int result = feenableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW /* | FE_INEXACT */);
+    DVASSERT(result != -1);
+    Logger::FrameworkDebug("FPU exceptions enabled");
+#endif
+#endif // __DAVAENGINE_ANDROID__
+}
+#endif // non __DAVAENGINE_WINDOWS__
+#else // __DAVAENGINE_DEBUG__
+#ifdef __DAVAENGINE_WINDOWS__
+void DisableFloatingPointExceptions()
+{
+    // do nothing on windows fpu exceptions disabled by default
+}
+#else // non __DAVAENGINE_WINDOWS__
+void DisableFloatingPointExceptions()
+{
+    Logger::FrameworkDebug("disable FPU exceptions");
+#ifdef __DAVAENGINE_ANDROID__
+    int result = fedisableexcept(FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW /* | FE_INEXACT */);
+    DVASSERT(result != -1);
+#else
+// on iOS fpu exceptions disables by default
+#endif
+}
+#endif
+#endif // not DAVA_ENGINE_DEBUG_FPU_EXCEPTIONS
+} // end namespace debug_details
+
 void Core::CreateSingletons()
 {
-    // check types size
     new Logger();
+
+#ifdef DAVA_ENGINE_DEBUG_FPU_EXCEPTIONS
+    fpu_exceptions::EnableFloatingPointExceptions();
+#else
+    fpu_exceptions::DisableFloatingPointExceptions();
+#endif
+
     new AllocatorFactory();
     new JobManager();
     new FileSystem();
@@ -124,7 +208,16 @@ void Core::CreateSingletons()
     FileSystem::Instance()->SetDefaultDocumentsDirectory();
     FileSystem::Instance()->CreateDirectory(FileSystem::Instance()->GetCurrentDocumentsDirectory(), true);
 
-    new SoundSystem();
+    Logger::Debug("SoundSystem init start");
+    try
+    {
+        CreateSoundSystem();
+    }
+    catch (std::exception& ex)
+    {
+        Logger::Error("%s", ex.what());
+    }
+    Logger::Debug("SoundSystem init finish");
 
     if (isConsoleMode)
     {
@@ -134,26 +227,21 @@ void Core::CreateSingletons()
         Logger::Instance()->SetLogLevel(Logger::LEVEL_INFO);
     }
 
-    new LocalizationSystem();
+    DeviceInfo::InitializeScreenInfo();
 
-    new SystemTimer();
+    new EngineSettings();
+    new LocalizationSystem();
     new Random();
     new AnimationManager();
     new FontManager();
+    new VirtualCoordinatesSystem();
     new UIControlSystem();
     new InputSystem();
     new PerformanceSettings();
     new VersionInfo();
-    new ImageSystem();
-    new FrameOcclusionQueryManager();
 
-    new VirtualCoordinatesSystem();
     new RenderSystem2D();
 
-#if defined(__DAVAENGINE_ANDROID__)
-    new AssetsManager();
-#endif
-    
 #if defined __DAVAENGINE_IPHONE__
 // not used
 #elif defined(__DAVAENGINE_ANDROID__)
@@ -167,9 +255,10 @@ void Core::CreateSingletons()
     new DownloadManager();
     DownloadManager::Instance()->SetDownloader(new CurlDownloader());
 
-    new LocalNotificationController();
+    dlcManager.reset(new DLCManagerImpl);
+    analyticsCore.reset(new Analytics::Core);
 
-    DeviceInfo::InitializeScreenInfo();
+    new LocalNotificationController();
 
     RegisterDAVAClasses();
 
@@ -184,8 +273,7 @@ void Core::CreateSingletons()
 void Core::CreateRenderer()
 {
     DVASSERT(options->IsKeyExists("renderer"));
-    rhi::Api renderer = (rhi::Api)options->GetInt32("renderer");
-
+    rhi::Api renderer = static_cast<rhi::Api>(options->GetInt32("renderer"));
     if (options->IsKeyExists("rhi_threaded_frame_count"))
     {
         rendererParams.threadedRenderEnabled = true;
@@ -204,8 +292,9 @@ void Core::CreateRenderer()
     rendererParams.maxRenderPassCount = options->GetInt32("max_render_pass_count");
     rendererParams.maxCommandBuffer = options->GetInt32("max_command_buffer_count");
     rendererParams.maxPacketListCount = options->GetInt32("max_packet_list_count");
-
     rendererParams.shaderConstRingBufferSize = options->GetInt32("shader_const_buffer_size");
+    rendererParams.renderingErrorCallback = &Core::OnRenderingError;
+    rendererParams.renderingErrorCallbackContext = this;
 
     Renderer::Initialize(renderer, rendererParams);
 }
@@ -227,7 +316,6 @@ void Core::ReleaseSingletons()
 #endif
 
     LocalNotificationController::Instance()->Release();
-    DownloadManager::Instance()->Release();
     PerformanceSettings::Instance()->Release();
     UIScreenManager::Instance()->Release();
     UIControlSystem::Instance()->Release();
@@ -238,26 +326,26 @@ void Core::ReleaseSingletons()
 //SoundSystem::Instance()->Release();
 #endif //#if defined(__DAVAENGINE_IPHONE__) || defined(__DAVAENGINE_ANDROID__)
     LocalizationSystem::Instance()->Release();
-    //  Logger::FrameworkDebug("[Core::Release] successfull");
+    EngineSettings::Instance()->Release();
     FileSystem::Instance()->Release();
     SoundSystem::Instance()->Release();
     Random::Instance()->Release();
-    FrameOcclusionQueryManager::Instance()->Release();
-    VirtualCoordinatesSystem::Instance()->Release();
     RenderSystem2D::Instance()->Release();
+
+    dlcManager.reset();
+    analyticsCore.reset();
+
+    DownloadManager::Instance()->Release();
 
     InputSystem::Instance()->Release();
     JobManager::Instance()->Release();
     VersionInfo::Instance()->Release();
     AllocatorFactory::Instance()->Release();
     Logger::Instance()->Release();
-    ImageSystem::Instance()->Release();
 
-#if defined(__DAVAENGINE_ANDROID__)
-    AssetsManager::Instance()->Release();
+#ifdef __DAVAENGINE_ANDROID__
+    AssetsManagerAndroid::Instance()->Release();
 #endif
-
-    SystemTimer::Instance()->Release();
 }
 
 void Core::SetOptions(KeyedArchive* archiveOfOptions)
@@ -265,12 +353,55 @@ void Core::SetOptions(KeyedArchive* archiveOfOptions)
     SafeRelease(options);
 
     options = SafeRetain(archiveOfOptions);
-    
-#if defined(__DAVAENGINE_WIN_UAP__)
-    screenOrientation = options->GetInt32("orientation", SCREEN_ORIENTATION_LANDSCAPE_AUTOROTATE);
+
+#if defined(__DAVAENGINE_WIN32__)
+    screenOrientation = static_cast<eScreenOrientation>(options->GetInt32("orientation", SCREEN_ORIENTATION_LANDSCAPE_AUTOROTATE));
+
+    using RotationPrefFn = BOOL(WINAPI*)(_In_ ORIENTATION_PREFERENCE);
+
+    // we are trying to get SetDisplayAutoRotationPreferences with GetProcAddress
+    // because this function is available only on win8 and win10 but we should be able
+    // to run the same build on win7, win8, win10. So on win7 GetProcAddress will return null
+    // and SetDisplayAutoRotationPreferences wont be called
+    HMODULE user32 = GetModuleHandle(TEXT("user32.dll"));
+    RotationPrefFn fn = reinterpret_cast<RotationPrefFn>(GetProcAddress(user32, "SetDisplayAutoRotationPreferences"));
+
+    if (nullptr != fn)
+    {
+        ORIENTATION_PREFERENCE orientationp = ORIENTATION_PREFERENCE_NONE;
+
+        switch (screenOrientation)
+        {
+        case DAVA::Core::SCREEN_ORIENTATION_LANDSCAPE_RIGHT:
+            orientationp |= ORIENTATION_PREFERENCE_LANDSCAPE;
+            break;
+        case DAVA::Core::SCREEN_ORIENTATION_LANDSCAPE_LEFT:
+            orientationp |= ORIENTATION_PREFERENCE_LANDSCAPE_FLIPPED;
+            break;
+        case DAVA::Core::SCREEN_ORIENTATION_PORTRAIT:
+            orientationp |= ORIENTATION_PREFERENCE_PORTRAIT;
+            break;
+        case DAVA::Core::SCREEN_ORIENTATION_PORTRAIT_UPSIDE_DOWN:
+            orientationp |= ORIENTATION_PREFERENCE_PORTRAIT_FLIPPED;
+            break;
+        case DAVA::Core::SCREEN_ORIENTATION_LANDSCAPE_AUTOROTATE:
+            orientationp |= (ORIENTATION_PREFERENCE_LANDSCAPE | ORIENTATION_PREFERENCE_LANDSCAPE_FLIPPED);
+            break;
+        case DAVA::Core::SCREEN_ORIENTATION_PORTRAIT_AUTOROTATE:
+            orientationp |= (ORIENTATION_PREFERENCE_PORTRAIT | ORIENTATION_PREFERENCE_PORTRAIT_FLIPPED);
+            break;
+        default:
+            break;
+        }
+
+        (*fn)(orientationp);
+    }
+
+#elif defined(__DAVAENGINE_WIN_UAP__)
+    screenOrientation = static_cast<eScreenOrientation>(options->GetInt32("orientation", SCREEN_ORIENTATION_LANDSCAPE_AUTOROTATE));
 #elif !defined(__DAVAENGINE_ANDROID__) // defined(__DAVAENGINE_WIN_UAP__)
     //YZ android platform always use SCREEN_ORIENTATION_PORTRAIT and rotate system view and don't rotate GL view
-    screenOrientation = options->GetInt32("orientation", SCREEN_ORIENTATION_PORTRAIT);
+    screenOrientation = static_cast<eScreenOrientation>(options->GetInt32("orientation", SCREEN_ORIENTATION_PORTRAIT));
 #endif
 }
 
@@ -281,7 +412,7 @@ KeyedArchive* Core::GetOptions()
 
 Core::eScreenOrientation Core::GetScreenOrientation()
 {
-    return (Core::eScreenOrientation)screenOrientation;
+    return screenOrientation;
 }
 
 Core::eScreenMode Core::GetScreenMode()
@@ -326,18 +457,18 @@ DisplayMode Core::FindBestMode(const DisplayMode& requestedMode)
     {
         int32 minDiffWidth = 0;
         int32 minDiffHeight = 0;
-        float32 requestedAspect = (requestedMode.height > 0 ? (float32)requestedMode.width / (float32)requestedMode.height : 1.0f);
+        float32 requestedAspect = (requestedMode.height > 0 ? float32(requestedMode.width) / float32(requestedMode.height) : 1.0f);
         float32 minDiffAspect = 0;
 
         for (List<DisplayMode>::iterator it = availableDisplayModes.begin(); it != availableDisplayModes.end(); ++it)
         {
             DisplayMode& availableMode = *it;
 
-            int32 diffWidth = abs(availableMode.width - requestedMode.width);
-            int32 diffHeight = abs(availableMode.height - requestedMode.height);
+            int32 diffWidth = std::abs(availableMode.width - requestedMode.width);
+            int32 diffHeight = std::abs(availableMode.height - requestedMode.height);
 
-            float32 availableAspect = (availableMode.height > 0 ? (float32)availableMode.width / (float32)availableMode.height : 1.0f);
-            float32 diffAspect = fabsf(availableAspect - requestedAspect);
+            float32 availableAspect = (availableMode.height > 0 ? float32(availableMode.width) / float32(availableMode.height) : 1.0f);
+            float32 diffAspect = std::abs(availableAspect - requestedAspect);
 
             //          if (diffWidth >= 0 && diffHeight >= 0)
             {
@@ -398,15 +529,15 @@ DisplayMode Core::FindBestMode(const DisplayMode& requestedMode)
     return bestMatchMode;
 }
 
-DisplayMode Core::GetCurrentDisplayMode()
+Vector2 Core::GetWindowSize()
 {
-    return DisplayMode();
+    return Vector2(screenMetrics.width, screenMetrics.height);
 }
 
 void Core::Quit()
 {
+    Logger::FrameworkDebug("[Core::Quit] is not supported by platform implementation of core");
     exit(0);
-    Logger::FrameworkDebug("[Core::Quit] do not supported by platform implementation of core");
 }
 
 void Core::SetApplicationCore(ApplicationCore* _core)
@@ -422,17 +553,10 @@ ApplicationCore* Core::GetApplicationCore()
 void Core::SystemAppStarted()
 {
     Logger::Info("Core::SystemAppStarted in");
-    #if PROFILER_ENABLED
-    profiler::EnsureInited();
-    NAME_COUNTER(PROF__FRAME, "frame");
-    NAME_COUNTER(PROF__FRAME_UPDATE, "frame-update");
-    NAME_COUNTER(PROF__FRAME_DRAW, "frame-draw");
-    NAME_COUNTER(PROF__FRAME_ENDFRAME, "frame-endframe");
-    #endif
 
-    if (VirtualCoordinatesSystem::Instance()->WasScreenSizeChanged())
+    if (UIControlSystem::Instance()->vcs->WasScreenSizeChanged())
     {
-        VirtualCoordinatesSystem::Instance()->ScreenSizeChanged();
+        UIControlSystem::Instance()->vcs->ScreenSizeChanged();
         /*  Question to Hottych: Does it really necessary here?
             RenderManager::Instance()->SetRenderOrientation(Core::Instance()->GetScreenOrientation());
          */
@@ -453,12 +577,9 @@ void Core::SystemAppFinished()
 {
     Logger::Info("Core::SystemAppFinished in");
 
+    systemAppFinished.Emit();
     if (core != nullptr)
     {
-        #if TRACER_ENABLED
-        //        profiler::DumpEvents();
-        profiler::SaveEvents("trace.json");
-        #endif
         core->OnAppFinished();
         Core::Instance()->ReleaseRenderer();
     }
@@ -468,17 +589,7 @@ void Core::SystemAppFinished()
 
 void Core::SystemProcessFrame()
 {
-    #if PROFILER_ENABLED
-    profiler::EnsureInited();
-    profiler::Start();
-    START_TIMING(PROF__FRAME);
-    #endif
-
-    TRACE_BEGIN_EVENT((uint32)Thread::GetCurrentId(), "", "Core::SystemProcessFrame");
-    SCOPE_EXIT
-    {
-        TRACE_END_EVENT((uint32)Thread::GetCurrentId(), "", "Core::SystemProcessFrame");
-    };
+    DAVA_PROFILER_CPU_SCOPE_WITH_FRAME_INDEX(ProfilerCPUMarkerName::ENGINE_ON_FRAME, globalFrameIndex);
 
 #ifdef __DAVAENGINE_NVIDIA_TEGRA_PROFILE__
     static bool isInit = false;
@@ -498,9 +609,7 @@ void Core::SystemProcessFrame()
     }
     EGLuint64NV start = eglGetSystemTimeNV() / frequency;
 #endif //__DAVAENGINE_NVIDIA_TEGRA_PROFILE__
-    Stats::Instance()->BeginFrame();
-    TIME_PROFILE("Core::SystemProcessFrame");
-    
+
 #if !defined(DAVA_NETWORK_DISABLE)
     // Poll for network I/O events here, not depending on Core active flag
     Net::NetCore::Instance()->Poll();
@@ -510,53 +619,33 @@ void Core::SystemProcessFrame()
 
     if (!core)
     {
-        #if PROFILER_ENABLED
-        profiler::Stop();
-        #endif
         return;
     }
 
     if (!isActive)
     {
-        LCP;
-        #if PROFILER_ENABLED
-        profiler::Stop();
-        #endif
         return;
     }
 
-    SystemTimer::Instance()->Start();
+    SystemTimer::StartFrame();
+    SystemTimer::ComputeRealFrameDelta();
 
-    /**
-        Check if device not in lost state first / after that be
-    */
-    //  if (!Renderer::IsDeviceLost())
     {
-        // #ifdef __DAVAENGINE_DIRECTX9__
-        //      if(firstRun)
-        //      {
-        //          core->BeginFrame();
-        //          firstRun = false;
-        //      }
-        // #else
         InputSystem::Instance()->OnBeforeUpdate();
 
-        TRACE_BEGIN_EVENT((uint32)Thread::GetCurrentId(), "", "Core::BeginFrame")
         core->BeginFrame();
-        TRACE_END_EVENT((uint32)Thread::GetCurrentId(), "", "Core::BeginFrame")
 
-        //#endif
-
+#if !defined(__DAVAENGINE_WIN32__) && !defined(__DAVAENGINE_WIN_UAP__) && !defined(__DAVAENGINE_MACOS__)
         // recalc frame inside begin / end frame
-        if (VirtualCoordinatesSystem::Instance()->WasScreenSizeChanged())
+        VirtualCoordinatesSystem* vsc = UIControlSystem::Instance()->vcs;
+        if (vsc->WasScreenSizeChanged())
         {
-            VirtualCoordinatesSystem::Instance()->ScreenSizeChanged();
-            UIScreenManager::Instance()->ScreenSizeChanged();
-            UIControlSystem::Instance()->ScreenSizeChanged();
+            vsc->ScreenSizeChanged();
         }
+#endif
 
-        float32 frameDelta = SystemTimer::Instance()->FrameDelta();
-        SystemTimer::Instance()->UpdateGlobalTime(frameDelta);
+        float32 frameDelta = SystemTimer::GetFrameDelta();
+        SystemTimer::UpdateGlobalTime(frameDelta);
 
         if (Replay::IsRecord())
         {
@@ -568,54 +657,39 @@ void Core::SystemProcessFrame()
             frameDelta = Replay::Instance()->PlayFrameTime();
             if (Replay::IsPlayback()) //can be unset in previous string
             {
-                SystemTimer::Instance()->SetFrameDelta(frameDelta);
+                SystemTimer::SetFrameDelta(frameDelta);
             }
         }
 
-        START_TIMING(PROF__FRAME_UPDATE);
-
         LocalNotificationController::Instance()->Update();
         DownloadManager::Instance()->Update();
+        static_cast<DLCManagerImpl*>(dlcManager.get())->Update(frameDelta);
 
-        TRACE_BEGIN_EVENT((uint32)Thread::GetCurrentId(), "", "JobManager::Update")
         JobManager::Instance()->Update();
-        TRACE_END_EVENT((uint32)Thread::GetCurrentId(), "", "JobManager::Update")
 
-        TRACE_BEGIN_EVENT((uint32)Thread::GetCurrentId(), "", "Core::Update")
+        updated.Emit(frameDelta);
         core->Update(frameDelta);
-        TRACE_END_EVENT((uint32)Thread::GetCurrentId(), "", "Core::Update")
 
         InputSystem::Instance()->OnAfterUpdate();
-        STOP_TIMING(PROF__FRAME_UPDATE);
 
-        START_TIMING(PROF__FRAME_DRAW);
-
-        TRACE_BEGIN_EVENT((uint32)Thread::GetCurrentId(), "", "Core::Draw")
         core->Draw();
-        TRACE_END_EVENT((uint32)Thread::GetCurrentId(), "", "Core::Draw")
-        STOP_TIMING(PROF__FRAME_DRAW);
 
-        START_TIMING(PROF__FRAME_ENDFRAME);
-        TRACE_BEGIN_EVENT((uint32)Thread::GetCurrentId(), "", "Core::EndFrame")
         core->EndFrame();
-        TRACE_END_EVENT((uint32)Thread::GetCurrentId(), "", "Core::EndFrame")
-
-        STOP_TIMING(PROF__FRAME_ENDFRAME);
     }
-    Stats::Instance()->EndFrame();
+
     globalFrameIndex++;
-    
+
 #ifdef __DAVAENGINE_NVIDIA_TEGRA_PROFILE__
     EGLuint64NV end = eglGetSystemTimeNV() / frequency;
     EGLuint64NV interval = end - start;
 #endif //__DAVAENGINE_NVIDIA_TEGRA_PROFILE__
 
-    #if PROFILER_ENABLED
-    STOP_TIMING(PROF__FRAME);
-    profiler::Stop();
-    //profiler::Dump();
-    profiler::DumpAverage();
-    #endif
+#if defined(__DAVAENGINE_WIN32__) || defined(__DAVAENGINE_WIN_UAP__) || defined(__DAVAENGINE_MACOS__)
+    if (screenMetrics.initialized && screenMetrics.screenMetricsModified)
+    {
+        ApplyWindowSize();
+    }
+#endif // defined(__DAVAENGINE_WIN32__) || defined(__DAVAENGINE_WIN_UAP__) || defined(__DAVAENGINE_MACOS__)
 }
 
 void Core::GoBackground(bool isLock)
@@ -645,10 +719,14 @@ void Core::GoForeground()
 
 void Core::FocusLost()
 {
+    UIControlSystem::Instance()->CancelAllInputs();
+    InputSystem::Instance()->GetKeyboard().ClearAllKeys();
     if (core)
     {
         core->OnFocusLost();
     }
+    isFocused = false;
+    focusChanged.Emit(isFocused);
 }
 
 void Core::FocusReceived()
@@ -657,6 +735,8 @@ void Core::FocusReceived()
     {
         core->OnFocusReceived();
     }
+    isFocused = true;
+    focusChanged.Emit(isFocused);
 }
 
 uint32 Core::GetGlobalFrameIndex()
@@ -716,12 +796,16 @@ bool Core::IsConsoleMode()
 
 void* Core::GetNativeView() const
 {
-    return nativeView;
+    return screenMetrics.nativeView;
 }
 
 void Core::SetNativeView(void* newNativeView)
 {
-    nativeView = newNativeView;
+    DVASSERT(nullptr != newNativeView);
+    if (screenMetrics.nativeView != newNativeView)
+    {
+        screenMetrics.nativeView = newNativeView;
+    }
 }
 
 void Core::EnableConsoleMode()
@@ -729,10 +813,93 @@ void Core::EnableConsoleMode()
     isConsoleMode = true;
 }
 
+void Core::InitWindowSize(void* nativeView, float32 width, float32 height, float32 scaleX, float32 scaleY)
+{
+    DVASSERT(nullptr != nativeView);
+    DVASSERT(scaleX * scaleY);
+    DVASSERT(!screenMetrics.initialized);
+    screenMetrics.nativeView = nativeView;
+    screenMetrics.width = width;
+    screenMetrics.height = height;
+    screenMetrics.scaleX = scaleX;
+    screenMetrics.scaleY = scaleY;
+    screenMetrics.screenMetricsModified = false;
+    screenMetrics.initialized = true;
+
+    rendererParams.window = screenMetrics.nativeView;
+    rendererParams.width = static_cast<int32>(screenMetrics.width * screenMetrics.scaleX * screenMetrics.userScale);
+    rendererParams.height = static_cast<int32>(screenMetrics.height * screenMetrics.scaleY * screenMetrics.userScale);
+    rendererParams.scaleX = screenMetrics.scaleX * screenMetrics.userScale;
+    rendererParams.scaleY = screenMetrics.scaleY * screenMetrics.userScale;
+
+    VirtualCoordinatesSystem* virtSystem = UIControlSystem::Instance()->vcs;
+    virtSystem->SetInputScreenAreaSize(static_cast<int32>(screenMetrics.width), static_cast<int32>(screenMetrics.height));
+    virtSystem->SetPhysicalScreenSize(static_cast<int32>(rendererParams.width), static_cast<int32>(rendererParams.height));
+    virtSystem->EnableReloadResourceOnResize(true);
+}
+
+void Core::WindowSizeChanged(float32 width, float32 height, float32 scaleX, float32 scaleY)
+{
+    if ((width == 0.f) || (height == 0.f) || (scaleX == 0.f) || (scaleY == 0.f))
+    {
+        return;
+    }
+    bool equal = true;
+    equal &= FLOAT_EQUAL(width, screenMetrics.width);
+    equal &= FLOAT_EQUAL(height, screenMetrics.height);
+    equal &= FLOAT_EQUAL(scaleX, screenMetrics.scaleX);
+    equal &= FLOAT_EQUAL(scaleY, screenMetrics.scaleY);
+
+    if (!equal)
+    {
+        screenMetrics.width = width;
+        screenMetrics.height = height;
+        screenMetrics.scaleX = scaleX;
+        screenMetrics.scaleY = scaleY;
+        // if changedMetricsScreen == true, then on the next call SystemProcessFrame() update all sizes and systems, after set it false
+        screenMetrics.screenMetricsModified = true;
+    }
+}
+
+void Core::ApplyWindowSize()
+{
+    if (Renderer::IsInitialized())
+    {
+        screenMetrics.screenMetricsModified = false;
+        int32 physicalWidth = static_cast<int32>(screenMetrics.width * screenMetrics.scaleX * screenMetrics.userScale);
+        int32 physicalHeight = static_cast<int32>(screenMetrics.height * screenMetrics.scaleY * screenMetrics.userScale);
+
+        // render reset
+        rhi::ResetParam params;
+        params.width = physicalWidth;
+        params.height = physicalHeight;
+        params.scaleX = screenMetrics.scaleX * screenMetrics.userScale;
+        params.scaleY = screenMetrics.scaleY * screenMetrics.userScale;
+        params.window = screenMetrics.nativeView;
+        Renderer::Reset(params);
+
+        VirtualCoordinatesSystem* virtSystem = UIControlSystem::Instance()->vcs;
+        virtSystem->SetInputScreenAreaSize(static_cast<int32>(screenMetrics.width), static_cast<int32>(screenMetrics.height));
+        virtSystem->SetPhysicalScreenSize(physicalWidth, physicalHeight);
+        virtSystem->ScreenSizeChanged();
+
+        if (virtSystem->GetReloadResourceOnResize())
+        {
+            Sprite::ValidateForSize();
+            TextBlock::ScreenResolutionChanged();
+        }
+    }
+}
+
 void Core::SetIsActive(bool _isActive)
 {
     isActive = _isActive;
     Logger::Info("Core::SetIsActive %s", (_isActive) ? "TRUE" : "FALSE");
+}
+
+bool Core::IsFocused()
+{
+    return isFocused;
 }
 
 #if defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_WINDOWS__)
@@ -751,23 +918,62 @@ void Core::SetIcon(int32 /*iconId*/){};
 
 float32 Core::GetScreenScaleMultiplier() const
 {
-    float32 ret = 1.0f;
-
-    if (options)
-    {
-        ret = options->GetFloat("userScreenScaleFactor", 1.0f);
-    }
-
-    return ret;
+    return screenMetrics.userScale;
 }
 
 void Core::SetScreenScaleMultiplier(float32 multiplier)
 {
-    options->SetFloat("userScreenScaleFactor", multiplier);
+    DVASSERT(multiplier > 0.f);
+    if (!FLOAT_EQUAL(screenMetrics.userScale, multiplier))
+    {
+        screenMetrics.userScale = multiplier;
+        screenMetrics.screenMetricsModified = true;
+        options->SetFloat("userScreenScaleFactor", multiplier);
+    }
 }
 
 float32 Core::GetScreenScaleFactor() const
 {
     return (DeviceInfo::GetScreenInfo().scale * GetScreenScaleMultiplier());
 }
-};
+
+void Core::SetWindowMinimumSize(float32 /*width*/, float32 /*height*/)
+{
+}
+
+Vector2 Core::GetWindowMinimumSize() const
+{
+    return Vector2();
+}
+
+void* DAVA::Core::GetNativeWindow() const
+{
+    return nullptr;
+}
+
+DLCManager& Core::GetPackManager() const
+{
+    DVASSERT(dlcManager);
+    return *dlcManager;
+}
+
+Analytics::Core& Core::GetAnalyticsCore() const
+{
+    DVASSERT(analyticsCore);
+    return *analyticsCore;
+}
+
+void Core::OnRenderingError(rhi::RenderingError error, void* context)
+{
+    GetApplicationCore()->OnRenderingIsNotPossible(error);
+}
+
+void Core::AdjustSystemTimer(int64 adjustMicro)
+{
+    Logger::Info("System timer adjusted by %lld us", adjustMicro);
+    SystemTimer::Adjust(adjustMicro);
+}
+
+} // namespace DAVA
+
+#endif //!__DAVAENGINE_COREV2__

@@ -1,45 +1,35 @@
-/*==================================================================================
- Copyright (c) 2008, binaryzebra
- All rights reserved.
- 
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
- 
- * Redistributions of source code must retain the above copyright
- notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
- notice, this list of conditions and the following disclaimer in the
- documentation and/or other materials provided with the distribution.
- * Neither the name of the binaryzebra nor the
- names of its contributors may be used to endorse or promote products
- derived from this software without specific prior written permission.
- 
- THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
- DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- =====================================================================================*/
-
-
 #include "UISizePolicyComponent.h"
 
 #include "UI/UIControl.h"
+#include "UI/Layouts/LayoutFormula.h"
 #include "Math/Vector.h"
 
 namespace DAVA
 {
+DAVA_VIRTUAL_REFLECTION_IMPL(UISizePolicyComponent)
+{
+    ReflectionRegistrator<UISizePolicyComponent>::Begin()
+    .ConstructorByPointer()
+    .DestructorByPointer([](UISizePolicyComponent* o) { o->Release(); })
+    .Field("horizontalPolicy", &UISizePolicyComponent::GetHorizontalPolicy, &UISizePolicyComponent::SetHorizontalPolicy)[M::EnumT<UISizePolicyComponent::eSizePolicy>()]
+    .Field("horizontalValue", &UISizePolicyComponent::GetHorizontalValue, &UISizePolicyComponent::SetHorizontalValue)
+    .Field("horizontalMin", &UISizePolicyComponent::GetHorizontalMinValue, &UISizePolicyComponent::SetHorizontalMinValue)
+    .Field("horizontalMax", &UISizePolicyComponent::GetHorizontalMaxValue, &UISizePolicyComponent::SetHorizontalMaxValue)
+    .Field("horizontalFormula", &UISizePolicyComponent::GetHorizontalFormula, &UISizePolicyComponent::SetHorizontalFormula)
+    .Field("verticalPolicy", &UISizePolicyComponent::GetVerticalPolicy, &UISizePolicyComponent::SetVerticalPolicy)[M::EnumT<UISizePolicyComponent::eSizePolicy>()]
+    .Field("verticalValue", &UISizePolicyComponent::GetVerticalValue, &UISizePolicyComponent::SetVerticalValue)
+    .Field("verticalMin", &UISizePolicyComponent::GetVerticalMinValue, &UISizePolicyComponent::SetVerticalMinValue)
+    .Field("verticalMax", &UISizePolicyComponent::GetVerticalMaxValue, &UISizePolicyComponent::SetVerticalMaxValue)
+    .Field("verticalFormula", &UISizePolicyComponent::GetVerticalFormula, &UISizePolicyComponent::SetVerticalFormula)
+    .End();
+}
+
 UISizePolicyComponent::UISizePolicyComponent()
 {
     const float32 DEFAULT_VALUE = 100.0f;
     const float32 MIN_LIMIT = 0.0f;
     const float32 MAX_LIMIT = 99999.0f;
-    
+
     for (int32 i = 0; i < Vector2::AXIS_COUNT; i++)
     {
         policy[i].policy = IGNORE_SIZE;
@@ -49,7 +39,7 @@ UISizePolicyComponent::UISizePolicyComponent()
     }
 }
 
-UISizePolicyComponent::UISizePolicyComponent(const UISizePolicyComponent &src)
+UISizePolicyComponent::UISizePolicyComponent(const UISizePolicyComponent& src)
 {
     for (int32 i = 0; i < Vector2::AXIS_COUNT; i++)
     {
@@ -57,12 +47,17 @@ UISizePolicyComponent::UISizePolicyComponent(const UISizePolicyComponent &src)
         policy[i].value = src.policy[i].value;
         policy[i].min = src.policy[i].min;
         policy[i].max = src.policy[i].max;
+
+        if (src.policy[i].formula)
+        {
+            policy[i].formula.reset(new LayoutFormula());
+            policy[i].formula->SetSource(src.policy[i].formula->GetSource());
+        }
     }
 }
 
 UISizePolicyComponent::~UISizePolicyComponent()
 {
-    
 }
 
 UISizePolicyComponent* UISizePolicyComponent::Clone() const
@@ -77,6 +72,11 @@ UISizePolicyComponent::eSizePolicy UISizePolicyComponent::GetHorizontalPolicy() 
 
 void UISizePolicyComponent::SetHorizontalPolicy(eSizePolicy newPolicy)
 {
+    if (policy[Vector2::AXIS_X].policy == newPolicy)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_X].policy = newPolicy;
     SetLayoutDirty();
 }
@@ -88,6 +88,11 @@ float32 UISizePolicyComponent::GetHorizontalValue() const
 
 void UISizePolicyComponent::SetHorizontalValue(float32 value)
 {
+    if (policy[Vector2::AXIS_X].value == value)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_X].value = value;
     SetLayoutDirty();
 }
@@ -99,6 +104,11 @@ float32 UISizePolicyComponent::GetHorizontalMinValue() const
 
 void UISizePolicyComponent::SetHorizontalMinValue(float32 value)
 {
+    if (policy[Vector2::AXIS_X].min == value)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_X].min = value;
     SetLayoutDirty();
 }
@@ -110,7 +120,32 @@ float32 UISizePolicyComponent::GetHorizontalMaxValue() const
 
 void UISizePolicyComponent::SetHorizontalMaxValue(float32 value)
 {
+    if (policy[Vector2::AXIS_X].max == value)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_X].max = value;
+    SetLayoutDirty();
+}
+
+String UISizePolicyComponent::GetHorizontalFormula() const
+{
+    if (policy[Vector2::AXIS_X].formula)
+    {
+        return policy[Vector2::AXIS_X].formula->GetSource();
+    }
+    return "";
+}
+
+void UISizePolicyComponent::SetHorizontalFormula(const String& formulaSource)
+{
+    if (policy[Vector2::AXIS_X].formula == nullptr)
+    {
+        policy[Vector2::AXIS_X].formula.reset(new LayoutFormula());
+    }
+    policy[Vector2::AXIS_X].formula->SetSource(formulaSource);
+
     SetLayoutDirty();
 }
 
@@ -121,6 +156,11 @@ UISizePolicyComponent::eSizePolicy UISizePolicyComponent::GetVerticalPolicy() co
 
 void UISizePolicyComponent::SetVerticalPolicy(eSizePolicy newPolicy)
 {
+    if (policy[Vector2::AXIS_Y].policy == newPolicy)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_Y].policy = newPolicy;
     SetLayoutDirty();
 }
@@ -132,6 +172,11 @@ float32 UISizePolicyComponent::GetVerticalValue() const
 
 void UISizePolicyComponent::SetVerticalValue(float32 value)
 {
+    if (policy[Vector2::AXIS_Y].value == value)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_Y].value = value;
     SetLayoutDirty();
 }
@@ -143,6 +188,11 @@ float32 UISizePolicyComponent::GetVerticalMinValue() const
 
 void UISizePolicyComponent::SetVerticalMinValue(float32 value)
 {
+    if (policy[Vector2::AXIS_Y].min == value)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_Y].min = value;
     SetLayoutDirty();
 }
@@ -154,7 +204,32 @@ float32 UISizePolicyComponent::GetVerticalMaxValue() const
 
 void UISizePolicyComponent::SetVerticalMaxValue(float32 value)
 {
+    if (policy[Vector2::AXIS_Y].max == value)
+    {
+        return;
+    }
+
     policy[Vector2::AXIS_Y].max = value;
+    SetLayoutDirty();
+}
+
+String UISizePolicyComponent::GetVerticalFormula() const
+{
+    if (policy[Vector2::AXIS_Y].formula)
+    {
+        return policy[Vector2::AXIS_Y].formula->GetSource();
+    }
+    return "";
+}
+
+void UISizePolicyComponent::SetVerticalFormula(const String& formulaSource)
+{
+    if (policy[Vector2::AXIS_Y].formula == nullptr)
+    {
+        policy[Vector2::AXIS_Y].formula.reset(new LayoutFormula());
+    }
+    policy[Vector2::AXIS_Y].formula->SetSource(formulaSource);
+
     SetLayoutDirty();
 }
 
@@ -169,7 +244,7 @@ float32 UISizePolicyComponent::GetValueByAxis(int32 axis) const
     DVASSERT(0 <= axis && axis < Vector2::AXIS_COUNT);
     return policy[axis].value;
 }
-    
+
 float32 UISizePolicyComponent::GetMinValueByAxis(int32 axis) const
 {
     DVASSERT(0 <= axis && axis < Vector2::AXIS_COUNT);
@@ -182,31 +257,21 @@ float32 UISizePolicyComponent::GetMaxValueByAxis(int32 axis) const
     return policy[axis].max;
 }
 
+LayoutFormula* UISizePolicyComponent::GetFormula(int32 axis) const
+{
+    return policy[axis].formula.get();
+}
+
+void UISizePolicyComponent::RemoveFormula(int32 axis)
+{
+    policy[axis].formula.reset();
+}
+
 bool UISizePolicyComponent::IsDependsOnChildren(int32 axis) const
 {
     DVASSERT(0 <= axis && axis < Vector2::AXIS_COUNT);
     eSizePolicy p = policy[axis].policy;
-    return p == PERCENT_OF_CHILDREN_SUM || p == PERCENT_OF_MAX_CHILD || p == PERCENT_OF_FIRST_CHILD || p == PERCENT_OF_LAST_CHILD;
-}
-
-int32 UISizePolicyComponent::GetHorizontalPolicyAsInt() const
-{
-    return GetHorizontalPolicy();
-}
-
-void UISizePolicyComponent::SetHorizontalPolicyFromInt(int32 policy)
-{
-    SetHorizontalPolicy(static_cast<eSizePolicy>(policy));
-}
-
-int32 UISizePolicyComponent::GetVerticalPolicyAsInt() const
-{
-    return GetVerticalPolicy();
-}
-
-void UISizePolicyComponent::SetVerticalPolicyFromInt(int32 policy)
-{
-    SetVerticalPolicy(static_cast<eSizePolicy>(policy));
+    return p == PERCENT_OF_CHILDREN_SUM || p == PERCENT_OF_MAX_CHILD || p == PERCENT_OF_FIRST_CHILD || p == PERCENT_OF_LAST_CHILD || p == FORMULA;
 }
 
 void UISizePolicyComponent::SetLayoutDirty()

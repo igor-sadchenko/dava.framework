@@ -1,30 +1,3 @@
-/*==================================================================================
- Copyright (c) 2008, binaryzebra
- All rights reserved.
- 
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
- 
- * Redistributions of source code must retain the above copyright
- notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
- notice, this list of conditions and the following disclaimer in the
- documentation and/or other materials provided with the distribution.
- * Neither the name of the binaryzebra nor the
- names of its contributors may be used to endorse or promote products
- derived from this software without specific prior written permission.
- 
- THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
- DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- =====================================================================================*/
 #include "Render/RenderHelper.h"
 #include "Render/Highlevel/StaticOcclusion.h"
 #include "Render/Highlevel/StaticOcclusionRenderPass.h"
@@ -32,7 +5,8 @@
 #include "Render/Highlevel/Camera.h"
 #include "Render/Image/Image.h"
 #include "Utils/StringFormat.h"
-#include "Platform/SystemTimer.h"
+#include "Utils/Random.h"
+#include "Time/SystemTimer.h"
 #include "Render/Highlevel/Landscape.h"
 #include "Render/Image/ImageSystem.h"
 #include "Render/2D/Systems/RenderSystem2D.h"
@@ -57,7 +31,7 @@ StaticOcclusion::~StaticOcclusion()
     SafeDelete(staticOcclusionRenderPass);
 }
 
-void StaticOcclusion::StartBuildOcclusion(StaticOcclusionData* _currentData, RenderSystem* _renderSystem, Landscape* _landscape)
+void StaticOcclusion::StartBuildOcclusion(StaticOcclusionData* _currentData, RenderSystem* _renderSystem, Landscape* _landscape, uint32 _occlusionPixelThreshold, uint32 _occlusionPixelThresholdForSpeedtree)
 {
     lastInfoMessage = "Preparing to build static occlusion...";
     staticOcclusionRenderPass = new StaticOcclusionRenderPass(PASS_FORWARD);
@@ -69,7 +43,7 @@ void StaticOcclusion::StartBuildOcclusion(StaticOcclusionData* _currentData, Ren
     yBlockCount = currentData->sizeY;
     zBlockCount = currentData->sizeZ;
 
-    stats.buildStartTime = SystemTimer::Instance()->GetAbsoluteNano();
+    stats.buildStartTime = SystemTimer::GetNs();
     stats.blockProcessingTime = stats.buildStartTime;
     stats.buildDuration = 0.0;
     stats.totalRenderPasses = 0;
@@ -80,6 +54,9 @@ void StaticOcclusion::StartBuildOcclusion(StaticOcclusionData* _currentData, Ren
 
     renderSystem = _renderSystem;
     landscape = _landscape;
+
+    occlusionPixelThreshold = _occlusionPixelThreshold;
+    occlusionPixelThresholdForSpeedtree = _occlusionPixelThresholdForSpeedtree;
 }
 
 AABBox3 StaticOcclusion::GetCellBox(uint32 x, uint32 y, uint32 z)
@@ -129,7 +106,7 @@ bool StaticOcclusion::ProccessBlock()
     {
         AdvanceToNextBlock();
 
-        auto currentTime = SystemTimer::Instance()->GetAbsoluteNano();
+        auto currentTime = SystemTimer::GetNs();
         stats.buildDuration += static_cast<double>(currentTime - stats.blockProcessingTime) / 1e+9;
         stats.blockProcessingTime = currentTime;
 
@@ -242,7 +219,7 @@ void StaticOcclusion::BuildRenderPassConfigsForCurrentBlock()
             {
                 for (uint32 stepY = 0; stepY <= stepCount; ++stepY)
                 {
-                    Vector3 renderPosition = startPosition + directionX * (float32)stepX * stepSize + directionY * (float32)stepY * stepSize;
+                    Vector3 renderPosition = startPosition + directionX * float32(stepX) * stepSize + directionY * float32(stepY) * stepSize;
 
                     if (landscape)
                     {
@@ -311,7 +288,7 @@ bool StaticOcclusion::RenderCurrentBlock()
     while ((renders < maxRenders) && !renderPassConfigs.empty())
     {
         auto i = renderPassConfigs.begin();
-        std::advance(i, rand() % renderPassConfigs.size());
+        std::advance(i, DAVA::Random::Instance()->Rand() % renderPassConfigs.size());
         PerformRender(*i);
         renderPassConfigs.erase(i);
         ++renders;
@@ -356,7 +333,14 @@ bool StaticOcclusion::ProcessRecorderQueries()
 
             if (rhi::QueryIsReady(fr->queryBuffer, index))
             {
-                if (rhi::QueryValue(fr->queryBuffer, index))
+                int32& samplesPassed = fr->samplesPassed[req->GetStaticOcclusionIndex()];
+                samplesPassed += rhi::QueryValue(fr->queryBuffer, index);
+
+                uint32 threshold = req->GetType() != RenderObject::TYPE_SPEED_TREE ?
+                occlusionPixelThreshold :
+                occlusionPixelThresholdForSpeedtree;
+
+                if (static_cast<uint32>(samplesPassed) > threshold)
                 {
                     bool alreadyVisible = currentData->IsObjectVisibleFromBlock(fr->blockIndex, req->GetStaticOcclusionIndex());
                     DVASSERT(!alreadyVisible);

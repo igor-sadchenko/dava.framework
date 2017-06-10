@@ -1,74 +1,61 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Scene3D/Components/Waypoint/WaypointComponent.h"
 #include "Scene3D/Entity.h"
 
+#include "Reflection/ReflectionRegistrator.h"
+#include "Reflection/ReflectedMeta.h"
+
 namespace DAVA
 {
+DAVA_VIRTUAL_REFLECTION_IMPL(WaypointComponent)
+{
+    ReflectionRegistrator<WaypointComponent>::Begin()[M::CantBeCreatedManualyComponent(), M::CantBeDeletedManualyComponent()]
+    .ConstructorByPointer()
+    .Field("pathName", &WaypointComponent::GetPathName, nullptr)[M::ReadOnly(), M::DisplayName("Path Name")]
+    .Field("properties", &WaypointComponent::GetProperties, nullptr)[M::DisplayName("Waypoint properties")]
+    .End();
+}
 
 WaypointComponent::WaypointComponent()
     : Component()
 {
-    properties = new KeyedArchive();
-}
-    
-WaypointComponent::~WaypointComponent()
-{
-    SafeRelease(properties);
 }
 
-Component * WaypointComponent::Clone(Entity * toEntity)
+WaypointComponent::~WaypointComponent()
 {
-	WaypointComponent * newComponent = new WaypointComponent();
-	newComponent->SetEntity(toEntity);
-    newComponent->SetProperties(properties);
-    newComponent->SetPathName(pathName);
-    newComponent->SetStarting(false);
+}
+
+void WaypointComponent::Init(PathComponent* path_, PathComponent::Waypoint* waypoint_)
+{
+    path = path_;
+    waypoint = waypoint_;
+}
+
+PathComponent* WaypointComponent::GetPath() const
+{
+    return path;
+}
+
+PathComponent::Waypoint* WaypointComponent::GetWaypoint() const
+{
+    return waypoint;
+}
+
+Component* WaypointComponent::Clone(Entity* toEntity)
+{
+    WaypointComponent* newComponent = new WaypointComponent();
+    newComponent->SetEntity(toEntity);
+    newComponent->path = path;
+    newComponent->waypoint = waypoint;
     return newComponent;
 }
 
-void WaypointComponent::Serialize(KeyedArchive *archive, SerializationContext *serializationContext)
+void WaypointComponent::Serialize(KeyedArchive* archive, SerializationContext* serializationContext)
 {
     DVASSERT(false);
 }
 
-void WaypointComponent::Deserialize(KeyedArchive *archive, SerializationContext *serializationContext)
+void WaypointComponent::Deserialize(KeyedArchive* archive, SerializationContext* serializationContext)
 {
     DVASSERT(false);
 }
-
-void WaypointComponent::SetProperties(KeyedArchive *archieve)
-{
-    SafeRelease(properties);
-    properties = new KeyedArchive(*archieve);
-}
-
-    
 }

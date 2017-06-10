@@ -1,43 +1,38 @@
-/*==================================================================================
- Copyright (c) 2008, binaryzebra
- All rights reserved.
- 
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
- 
- * Redistributions of source code must retain the above copyright
- notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
- notice, this list of conditions and the following disclaimer in the
- documentation and/or other materials provided with the distribution.
- * Neither the name of the binaryzebra nor the
- names of its contributors may be used to endorse or promote products
- derived from this software without specific prior written permission.
- 
- THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
- DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- =====================================================================================*/
-
 #include "UIAnchorComponent.h"
 
 #include "UI/UIControl.h"
+#include "Reflection/ReflectionRegistrator.h"
 
 namespace DAVA
 {
+DAVA_VIRTUAL_REFLECTION_IMPL(UIAnchorComponent)
+{
+    ReflectionRegistrator<UIAnchorComponent>::Begin()
+    .ConstructorByPointer()
+    .DestructorByPointer([](UIAnchorComponent* o) { o->Release(); })
+    .Field("enabled", &UIAnchorComponent::IsEnabled, &UIAnchorComponent::SetEnabled)
+    .Field("leftAnchorEnabled", &UIAnchorComponent::IsLeftAnchorEnabled, &UIAnchorComponent::SetLeftAnchorEnabled)
+    .Field("leftAnchor", &UIAnchorComponent::GetLeftAnchor, &UIAnchorComponent::SetLeftAnchor)
+    .Field("hCenterAnchorEnabled", &UIAnchorComponent::IsHCenterAnchorEnabled, &UIAnchorComponent::SetHCenterAnchorEnabled)
+    .Field("hCenterAnchor", &UIAnchorComponent::GetHCenterAnchor, &UIAnchorComponent::SetHCenterAnchor)
+    .Field("rightAnchorEnabled", &UIAnchorComponent::IsRightAnchorEnabled, &UIAnchorComponent::SetRightAnchorEnabled)
+    .Field("rightAnchor", &UIAnchorComponent::GetRightAnchor, &UIAnchorComponent::SetRightAnchor)
+    .Field("topAnchorEnabled", &UIAnchorComponent::IsTopAnchorEnabled, &UIAnchorComponent::SetTopAnchorEnabled)
+    .Field("topAnchor", &UIAnchorComponent::GetTopAnchor, &UIAnchorComponent::SetTopAnchor)
+    .Field("vCenterAnchorEnabled", &UIAnchorComponent::IsVCenterAnchorEnabled, &UIAnchorComponent::SetVCenterAnchorEnabled)
+    .Field("vCenterAnchor", &UIAnchorComponent::GetVCenterAnchor, &UIAnchorComponent::SetVCenterAnchor)
+    .Field("bottomAnchorEnabled", &UIAnchorComponent::IsBottomAnchorEnabled, &UIAnchorComponent::SetBottomAnchorEnabled)
+    .Field("bottomAnchor", &UIAnchorComponent::GetBottomAnchor, &UIAnchorComponent::SetBottomAnchor)
+    .Field("useRtl", &UIAnchorComponent::IsUseRtl, &UIAnchorComponent::SetUseRtl)
+    .End();
+}
+
 UIAnchorComponent::UIAnchorComponent()
 {
     SetEnabled(true);
 }
 
-UIAnchorComponent::UIAnchorComponent(const UIAnchorComponent &src)
+UIAnchorComponent::UIAnchorComponent(const UIAnchorComponent& src)
     : flags(src.flags)
     , leftAnchor(src.leftAnchor)
     , hCenterAnchor(src.hCenterAnchor)
@@ -46,14 +41,12 @@ UIAnchorComponent::UIAnchorComponent(const UIAnchorComponent &src)
     , vCenterAnchor(src.vCenterAnchor)
     , bottomAnchor(src.bottomAnchor)
 {
-    
 }
-    
+
 UIAnchorComponent::~UIAnchorComponent()
 {
-    
 }
-    
+
 UIAnchorComponent* UIAnchorComponent::Clone() const
 {
     return new UIAnchorComponent(*this);
@@ -66,7 +59,7 @@ bool UIAnchorComponent::IsEnabled() const
 
 void UIAnchorComponent::SetEnabled(bool enabled)
 {
-    flags.set(FLAG_ENABLED, enabled);
+    SetFlag(FLAG_ENABLED, enabled);
 }
 
 bool UIAnchorComponent::IsLeftAnchorEnabled() const
@@ -76,10 +69,9 @@ bool UIAnchorComponent::IsLeftAnchorEnabled() const
 
 void UIAnchorComponent::SetLeftAnchorEnabled(bool enabled)
 {
-    flags.set(FLAG_LEFT_ENABLED, enabled);
-    SetLayoutDirty();
+    SetFlag(FLAG_LEFT_ENABLED, enabled);
 }
-    
+
 float32 UIAnchorComponent::GetLeftAnchor() const
 {
     return leftAnchor;
@@ -87,6 +79,11 @@ float32 UIAnchorComponent::GetLeftAnchor() const
 
 void UIAnchorComponent::SetLeftAnchor(float32 anchor)
 {
+    if (leftAnchor == anchor)
+    {
+        return;
+    }
+
     leftAnchor = anchor;
     SetLayoutDirty();
 }
@@ -98,10 +95,9 @@ bool UIAnchorComponent::IsHCenterAnchorEnabled() const
 
 void UIAnchorComponent::SetHCenterAnchorEnabled(bool enabled)
 {
-    flags.set(FLAG_HCENTER_ENABLED, enabled);
-    SetLayoutDirty();
+    SetFlag(FLAG_HCENTER_ENABLED, enabled);
 }
-    
+
 float32 UIAnchorComponent::GetHCenterAnchor() const
 {
     return hCenterAnchor;
@@ -109,6 +105,10 @@ float32 UIAnchorComponent::GetHCenterAnchor() const
 
 void UIAnchorComponent::SetHCenterAnchor(float32 anchor)
 {
+    if (hCenterAnchor == anchor)
+    {
+        return;
+    }
     hCenterAnchor = anchor;
     SetLayoutDirty();
 }
@@ -120,10 +120,9 @@ bool UIAnchorComponent::IsRightAnchorEnabled() const
 
 void UIAnchorComponent::SetRightAnchorEnabled(bool enabled)
 {
-    flags.set(FLAG_RIGHT_ENABLED, enabled);
-    SetLayoutDirty();
+    SetFlag(FLAG_RIGHT_ENABLED, enabled);
 }
-    
+
 float32 UIAnchorComponent::GetRightAnchor() const
 {
     return rightAnchor;
@@ -131,6 +130,11 @@ float32 UIAnchorComponent::GetRightAnchor() const
 
 void UIAnchorComponent::SetRightAnchor(float32 anchor)
 {
+    if (rightAnchor == anchor)
+    {
+        return;
+    }
+
     rightAnchor = anchor;
     SetLayoutDirty();
 }
@@ -142,10 +146,9 @@ bool UIAnchorComponent::IsTopAnchorEnabled() const
 
 void UIAnchorComponent::SetTopAnchorEnabled(bool enabled)
 {
-    flags.set(FLAG_TOP_ENABLED, enabled);
-    SetLayoutDirty();
+    SetFlag(FLAG_TOP_ENABLED, enabled);
 }
-    
+
 float32 UIAnchorComponent::GetTopAnchor() const
 {
     return topAnchor;
@@ -153,6 +156,11 @@ float32 UIAnchorComponent::GetTopAnchor() const
 
 void UIAnchorComponent::SetTopAnchor(float32 anchor)
 {
+    if (topAnchor == anchor)
+    {
+        return;
+    }
+
     topAnchor = anchor;
     SetLayoutDirty();
 }
@@ -164,10 +172,9 @@ bool UIAnchorComponent::IsVCenterAnchorEnabled() const
 
 void UIAnchorComponent::SetVCenterAnchorEnabled(bool enabled)
 {
-    flags.set(FLAG_VCENTER_ENABLED, enabled);
-    SetLayoutDirty();
+    SetFlag(FLAG_VCENTER_ENABLED, enabled);
 }
-    
+
 float32 UIAnchorComponent::GetVCenterAnchor() const
 {
     return vCenterAnchor;
@@ -175,6 +182,11 @@ float32 UIAnchorComponent::GetVCenterAnchor() const
 
 void UIAnchorComponent::SetVCenterAnchor(float32 anchor)
 {
+    if (vCenterAnchor == anchor)
+    {
+        return;
+    }
+
     vCenterAnchor = anchor;
     SetLayoutDirty();
 }
@@ -186,10 +198,9 @@ bool UIAnchorComponent::IsBottomAnchorEnabled() const
 
 void UIAnchorComponent::SetBottomAnchorEnabled(bool enabled)
 {
-    flags.set(FLAG_BOTTOM_ENABLED, enabled);
-    SetLayoutDirty();
+    SetFlag(FLAG_BOTTOM_ENABLED, enabled);
 }
-    
+
 float32 UIAnchorComponent::GetBottomAnchor() const
 {
     return bottomAnchor;
@@ -197,6 +208,11 @@ float32 UIAnchorComponent::GetBottomAnchor() const
 
 void UIAnchorComponent::SetBottomAnchor(float32 anchor)
 {
+    if (bottomAnchor == anchor)
+    {
+        return;
+    }
+
     bottomAnchor = anchor;
     SetLayoutDirty();
 }
@@ -208,8 +224,7 @@ bool UIAnchorComponent::IsUseRtl() const
 
 void UIAnchorComponent::SetUseRtl(bool use)
 {
-    flags.set(FLAG_USE_RTL, use);
-    SetLayoutDirty();
+    SetFlag(FLAG_USE_RTL, use);
 }
 
 void UIAnchorComponent::SetLayoutDirty()
@@ -220,4 +235,12 @@ void UIAnchorComponent::SetLayoutDirty()
     }
 }
 
+void UIAnchorComponent::SetFlag(eFlags flag, bool enabled)
+{
+    if (flags.test(flag) != enabled)
+    {
+        flags.set(flag, enabled);
+        SetLayoutDirty();
+    }
+}
 }

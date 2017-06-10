@@ -1,79 +1,81 @@
-/*==================================================================================
- Copyright (c) 2008, binaryzebra
- All rights reserved.
- 
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
- 
- * Redistributions of source code must retain the above copyright
- notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
- notice, this list of conditions and the following disclaimer in the
- documentation and/or other materials provided with the distribution.
- * Neither the name of the binaryzebra nor the
- names of its contributors may be used to endorse or promote products
- derived from this software without specific prior written permission.
- 
- THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
- DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- =====================================================================================*/
-
-#ifndef __DAVAENGINE_UI_LAYOUT_SYSTEM_H__
-#define __DAVAENGINE_UI_LAYOUT_SYSTEM_H__
+#pragma once
 
 #include "Base/BaseTypes.h"
-#include "Math/Vector.h"
+#include "Base/RefPtr.h"
+#include "UI/UISystem.h"
 
-#include "ControlLayoutData.h"
+struct UILayoutSystemTest;
 
 namespace DAVA
 {
 class UIControl;
+class UIScreen;
+class UIScreenTransition;
+class UILayoutSystemListener;
 
-class UILayoutSystem
+class UILayoutSystem : public UISystem
 {
 public:
     UILayoutSystem();
-    virtual ~UILayoutSystem();
-    
-public:
+    ~UILayoutSystem() override;
+
+    void SetCurrentScreen(const RefPtr<UIScreen>& screen);
+    void SetCurrentScreenTransition(const RefPtr<UIScreenTransition>& screenTransition);
+    void SetPopupContainer(const RefPtr<UIControl>& popupContainer);
+
     bool IsRtl() const;
     void SetRtl(bool rtl);
 
     bool IsAutoupdatesEnabled() const;
     void SetAutoupdatesEnabled(bool enabled);
 
-    void ApplyLayout(UIControl* control, bool considerDenendenceOnChildren = false);
-    void ApplyLayoutNonRecursive(UIControl* control);
+    void SetDirty();
+    void CheckDirty();
+
+    void AddListener(UILayoutSystemListener* listener);
+    void RemoveListener(UILayoutSystemListener* listener);
+
+    void ManualApplyLayout(UIControl* control); //DON'T USE IT!
+
+protected:
+    void Process(float32 elapsedTime) override;
+    void ForceProcessControl(float32 elapsedTime, UIControl* control) override;
+
+    void UnregisterControl(UIControl* control) override;
+    void UnregisterComponent(UIControl* control, UIComponent* component) override;
 
 private:
     UIControl* FindNotDependentOnChildrenControl(UIControl* control) const;
+    bool HaveToLayoutAfterReorder(const UIControl* control) const;
+    bool HaveToLayoutAfterReposition(const UIControl* control) const;
 
     void CollectControls(UIControl* control, bool recursive);
     void CollectControlChildren(UIControl* control, int32 parentIndex, bool recursive);
+    void ProcessControlHierarhy(UIControl* control);
+    void ProcessControl(UIControl* control);
 
-    void ProcessAxis(Vector2::eAxis axis);
-    void DoMeasurePhase(Vector2::eAxis axis);
-    void DoLayoutPhase(Vector2::eAxis axis);
-
-    void ApplySizesAndPositions();
-    void ApplyPositions();
-
-private:
     bool isRtl = false;
     bool autoupdatesEnabled = true;
-    Vector<ControlLayoutData> layoutData;
+    bool dirty = false;
+    bool needUpdate = false;
+    std::unique_ptr<class Layouter> sharedLayouter;
+    RefPtr<UIScreen> currentScreen;
+    RefPtr<UIControl> popupContainer;
+    RefPtr<UIScreenTransition> currentScreenTransition;
+
+    Vector<UILayoutSystemListener*> listeners;
+
+    friend UILayoutSystemTest;
 };
 
+inline void UILayoutSystem::SetDirty()
+{
+    dirty = true;
 }
 
-
-#endif //__DAVAENGINE_UI_LAYOUT_SYSTEM_H__
+inline void UILayoutSystem::CheckDirty()
+{
+    needUpdate = dirty;
+    dirty = false;
+}
+}

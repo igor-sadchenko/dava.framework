@@ -1,37 +1,9 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-    #include "../Common/rhi_Private.h"
+#include "../Common/rhi_Private.h"
     #include "../Common/rhi_Pool.h"
     #include "rhi_Metal.h"
 
     #include "Debug/DVAssert.h"
-    #include "FileSystem/Logger.h"
+    #include "Logger/Logger.h"
 using DAVA::Logger;
 
     #include "_metal.h"
@@ -133,12 +105,11 @@ metal_DepthStencilState_Create(const DepthStencilState::Descriptor& desc)
     Handle handle = DepthStencilStateMetalPool::Alloc();
     DepthStencilStateMetal_t* state = DepthStencilStateMetalPool::Get(handle);
     MTLDepthStencilDescriptor* ds_desc = [MTLDepthStencilDescriptor new];
+    MTLStencilDescriptor* front_desc = [MTLStencilDescriptor new];
+    MTLStencilDescriptor* back_desc = [MTLStencilDescriptor new];
 
     if (desc.stencilEnabled)
     {
-        MTLStencilDescriptor* front_desc = [MTLStencilDescriptor new];
-        MTLStencilDescriptor* back_desc = [MTLStencilDescriptor new];
-
         front_desc.readMask = desc.stencilFront.readMask;
         front_desc.writeMask = desc.stencilFront.writeMask;
         front_desc.stencilFailureOperation = _StencilOp(StencilOperation(desc.stencilFront.failOperation));
@@ -154,18 +125,20 @@ metal_DepthStencilState_Create(const DepthStencilState::Descriptor& desc)
         back_desc.stencilCompareFunction = _CmpFunc(CmpFunc(desc.stencilBack.func));
 
         ds_desc.frontFaceStencil = front_desc;
-
-        if (desc.stencilTwoSided)
-            ds_desc.backFaceStencil = back_desc;
+        ds_desc.backFaceStencil = desc.stencilTwoSided ? back_desc : front_desc;
 
         state->stencilRefValue = desc.stencilFront.refValue;
     }
 
     ds_desc.depthWriteEnabled = (desc.depthWriteEnabled) ? YES : NO;
-    ds_desc.depthCompareFunction = _CmpFunc(CmpFunc(desc.depthFunc));
+    ds_desc.depthCompareFunction = (desc.depthTestEnabled) ? _CmpFunc(CmpFunc(desc.depthFunc)) : MTLCompareFunctionAlways;
 
     state->uid = [_Metal_Device newDepthStencilStateWithDescriptor:ds_desc];
     state->stencilEnabled = desc.stencilEnabled;
+
+    [front_desc release];
+    [back_desc release];
+    [ds_desc release];
 
     return handle;
 }
@@ -173,6 +146,13 @@ metal_DepthStencilState_Create(const DepthStencilState::Descriptor& desc)
 static void
 metal_DepthStencilState_Delete(Handle state)
 {
+    DepthStencilStateMetal_t* self = DepthStencilStateMetalPool::Get(state);
+
+    if (self)
+    {
+        self->uid = nil;
+    }
+
     DepthStencilStateMetalPool::Free(state);
 }
 

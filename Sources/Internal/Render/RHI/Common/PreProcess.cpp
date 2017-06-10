@@ -1,204 +1,52 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
+#include "PreProcess.h"
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
+#include "../rhi_Type.h"
+#include "rhi_Utils.h"
 
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
+#include "MCPP/mcpp_lib.h"
 
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
+#include <stdio.h>
+#include <stdarg.h>
 
-    #include "PreProcess.h"
+#define RHI_SHADER_SOURCE_BUFFER_SIZE (64 << 10)
 
-    #include "../rhi_Type.h"
-
-    #include "MCPP/mcpp_lib.h"
-
-    #include <stdio.h>
-    #include <stdarg.h>
-
-static std::string* _PreprocessedText = nullptr;
-
-//------------------------------------------------------------------------------
-
-static int
-_mcpp__fputc(int ch, OUTDEST dst)
+ShaderPreprocessScope::ShaderPreprocessScope()
 {
-    switch (dst)
-    {
-    case MCPP_OUT:
-    {
-        if (_PreprocessedText)
-            _PreprocessedText->push_back((char)ch);
-    }
-    break;
-
-    case MCPP_ERR:
-    {
-    }
-    break;
-
-    case MCPP_DBG:
-    {
-    }
-    break;
-
-    default:
-    {
-    }
-    }
-
-    return ch;
+    mcpp__startup();
 }
 
-//------------------------------------------------------------------------------
-
-static int
-_mcpp__fputs(const char* str, OUTDEST dst)
+ShaderPreprocessScope::~ShaderPreprocessScope()
 {
-    switch (dst)
-    {
-    case MCPP_OUT:
-    {
-        if (_PreprocessedText)
-            *_PreprocessedText += str;
-    }
-    break;
-
-    case MCPP_ERR:
-    {
-    }
-    break;
-
-    case MCPP_DBG:
-    {
-    }
-    break;
-
-    default:
-    {
-    }
-    }
-
-    return 0;
+    mcpp__shutdown();
 }
-
-//------------------------------------------------------------------------------
-
-static int
-_mcpp__fprintf(OUTDEST dst, const char* format, ...)
-{
-    va_list arglist;
-    char buf[2048];
-    int count = 0;
-
-    va_start(arglist, format);
-    count = vsnprintf(buf, countof(buf), format, arglist);
-    va_end(arglist);
-
-    switch (dst)
-    {
-    case MCPP_OUT:
-    {
-        if (_PreprocessedText)
-            *_PreprocessedText += buf;
-    }
-    break;
-
-    case MCPP_ERR:
-    {
-    }
-    break;
-
-    case MCPP_DBG:
-    {
-    }
-    break;
-
-    default:
-    {
-    }
-    }
-
-    return count;
-}
-
-//------------------------------------------------------------------------------
-
-void PreProcessText(const char* text, std::string* result)
-{
-    const char* argv[] =
-    {
-      "<mcpp>", // we just need first arg
-      "-P", // do not output #line directives
-      // it doesn't work as desired with '//' style comments (commented block inserted BEFORE non-commented text)
-      //        "-C",       // keep comments
-      MCPP_Text
-    };
-
-    _PreprocessedText = result;
-    {
-        mcpp__startup();
-        mcpp__set_input(text, static_cast<unsigned>(strlen(text)));
-        mcpp_set_out_func(&_mcpp__fputc, &_mcpp__fputs, &_mcpp__fprintf);
-        mcpp_lib_main(countof(argv), (char**)argv);
-        mcpp__cleanup();
-        mcpp__shutdown();
-    }
-    _PreprocessedText = nullptr;
-}
-
-//------------------------------------------------------------------------------
 
 void PreProcessText(const char* text, const char** arg, unsigned argCount, std::string* result)
 {
-    if (text)
-    {
-        const char* argv[128];
-        int argc = 0;
-        DVASSERT(argCount < countof(argv) - 2);
+    DVASSERT(text);
+    const char* argv[128];
+    int argc = 0;
+    DVASSERT(argCount < countof(argv) - 2);
 
-        argv[argc++] = "<mcpp>"; // we just need first arg
-        argv[argc++] = "-P"; // do not output #line directives
-        // it doesn't work as desired with '//' style comments (commented block inserted BEFORE non-commented text)
-        //        argv[argc++] = "-C";    // keep comments
-        for (const char **a = arg, **a_end = arg + argCount; a != a_end; ++a)
-            argv[argc++] = *a;
-        argv[argc++] = MCPP_Text;
+    argv[argc++] = "<mcpp>"; // we just need first arg
+    argv[argc++] = "-P"; // do not output #line directives
+    // it doesn't work as desired with '//' style comments (commented block inserted BEFORE non-commented text)
+    //  argv[argc++] = "-C";    // keep comments
+    for (const char **a = arg, **a_end = arg + argCount; a != a_end; ++a)
+        argv[argc++] = *a;
+    argv[argc++] = MCPP_Text;
 
-        _PreprocessedText = result;
-        {
-            mcpp__startup();
-            mcpp__set_input(text, static_cast<unsigned>(strlen(text)));
-            mcpp_set_out_func(&_mcpp__fputc, &_mcpp__fputs, &_mcpp__fprintf);
-            mcpp_lib_main(argc, (char**)argv);
-            mcpp__cleanup();
-            mcpp__shutdown();
-        }
-        _PreprocessedText = nullptr;
-    }
-    else
+    char localBuffer[RHI_SHADER_SOURCE_BUFFER_SIZE] = {};
+    _mcpp_preprocessed_text.buffer = localBuffer;
+    _mcpp_preprocessed_text.pos = 0;
     {
-        *result = "";
+        mcpp__set_input(text, static_cast<unsigned>(strlen(text)));
+        mcpp_set_out_func(&mcpp_fputc_impl, &mcpp_fputs_impl, &mcpp_fprintf_impl);
+        mcpp_lib_main(argc, const_cast<char**>(argv));
+        mcpp__cleanup();
     }
+    *result = std::string(localBuffer);
+    _mcpp_preprocessed_text.buffer = nullptr;
+    _mcpp_preprocessed_text.pos = 0;
 }
 
 //------------------------------------------------------------------------------

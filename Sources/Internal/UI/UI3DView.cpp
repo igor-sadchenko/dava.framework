@@ -1,58 +1,39 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "UI/UI3DView.h"
 #include "Scene3D/Scene.h"
-#include "Render/RenderHelper.h"
-#include "Render/OcclusionQuery.h"
 #include "Core/Core.h"
 #include "UI/UIControlSystem.h"
+#include "Render/RenderHelper.h"
+#include "Render/Highlevel/RenderPass.h"
 #include "Render/2D/Systems/RenderSystem2D.h"
-
+#include "Scene3D/Systems/QualitySettingsSystem.h"
 #include "Scene3D/Systems/Controller/RotationControllerSystem.h"
 #include "Scene3D/Systems/Controller/SnapToLandscapeControllerSystem.h"
 #include "Scene3D/Systems/Controller/WASDControllerSystem.h"
+#include "Reflection/ReflectionRegistrator.h"
+#include "UI/Update/UIUpdateComponent.h"
+#include "UI/Render/UISceneComponent.h"
 
-namespace DAVA 
+namespace DAVA
 {
+DAVA_VIRTUAL_REFLECTION_IMPL(UI3DView)
+{
+    ReflectionRegistrator<UI3DView>::Begin()
+    .ConstructorByPointer()
+    .DestructorByPointer([](UI3DView* o) { o->Release(); })
+    .Field("drawToFrameBuffer", &UI3DView::GetDrawToFrameBuffer, &UI3DView::SetDrawToFrameBuffer)
+    .Field("frameBufferScaleFactor", &UI3DView::GetFrameBufferScaleFactor, &UI3DView::SetFrameBufferScaleFactor)
+    .End();
+}
+
 UI3DView::UI3DView(const Rect& rect)
     : UIControl(rect)
     , scene(nullptr)
     , drawToFrameBuffer(false)
-    , needUpdateFrameBuffer(false)
-    , frameBuffer(nullptr)
     , fbScaleFactor(1.f)
     , fbRenderSize()
-    , fbTexSize()
-    , registeredInUIControlSystem(false)
 {
-
+    GetOrCreateComponent<UIUpdateComponent>(); //TODO Remove this code. move Update And Draw methods to UIRenderSystem.
+    GetOrCreateComponent<UISceneComponent>();
 }
 
 UI3DView::~UI3DView()
@@ -61,92 +42,148 @@ UI3DView::~UI3DView()
     SafeRelease(scene);
 }
 
-
-void UI3DView::SetScene(Scene * _scene)
+void UI3DView::SetScene(Scene* _scene)
 {
     SafeRelease(scene);
-    
+
     scene = SafeRetain(_scene);
-    
-    if(scene)
+
+    if (scene)
     {
         float32 aspect = size.dx / size.dy;
         for (int32 k = 0; k < scene->GetCameraCount(); ++k)
         {
             scene->GetCamera(k)->SetAspect(aspect);
         }
-        needUpdateFrameBuffer = true;
     }
 }
 
-Scene * UI3DView::GetScene() const
+Scene* UI3DView::GetScene() const
 {
     return scene;
 }
 
-void UI3DView::AddControl(UIControl *control)
+void UI3DView::AddControl(UIControl* control)
 {
     DVASSERT(0 && "UI3DView do not support children");
 }
 
-    
 void UI3DView::Update(float32 timeElapsed)
 {
     if (scene)
         scene->Update(timeElapsed);
 }
 
-void UI3DView::Draw(const UIGeometricData & geometricData)
+void UI3DView::Draw(const UIGeometricData& geometricData)
 {
     if (!scene)
         return;
 
+    RenderSystem2D::Instance()->Flush();
+
+    const RenderSystem2D::RenderTargetPassDescriptor& currentTarget = RenderSystem2D::Instance()->GetActiveTargetDescriptor();
+
     Rect viewportRect = geometricData.GetUnrotatedRect();
-    viewportRc = VirtualCoordinatesSystem::Instance()->ConvertVirtualToPhysical(viewportRect);
+
+    if (currentTarget.transformVirtualToPhysical)
+        viewportRc = UIControlSystem::Instance()->vcs->ConvertVirtualToPhysical(viewportRect);
+    else
+        viewportRc = viewportRect;
+
+    uint32 priority = currentTarget.priority;
+
+    uint32 targetWidth = 0;
+    uint32 targetHeight = 0;
+    PixelFormat targetFormat = PixelFormat::FORMAT_INVALID;
+
+    rhi::HTexture colorTexture;
+    rhi::HTexture depthStencilTexture;
+    rhi::LoadAction loadAction = rhi::LOADACTION_CLEAR;
 
     if (drawToFrameBuffer)
     {
-        // Calculate viewport for frame buffer
-        viewportRc.x = 0.f;
-        viewportRc.y = 0.f;
+        viewportRc.x = 0.0f;
+        viewportRc.y = 0.0f;
         viewportRc.dx *= fbScaleFactor;
         viewportRc.dy *= fbScaleFactor;
+
+        PrepareFrameBuffer();
+
+        priority += PRIORITY_SERVICE_3D;
+        colorTexture = frameBuffer->handle;
+        depthStencilTexture = frameBuffer->handleDepthStencil;
+        targetFormat = frameBuffer->GetFormat();
+        targetWidth = frameBuffer->GetWidth();
+        targetHeight = frameBuffer->GetHeight();
     }
     else
     {
-        viewportRc += VirtualCoordinatesSystem::Instance()->GetPhysicalDrawOffset();
-        RenderSystem2D::Instance()->Flush();
+        if (currentTarget.transformVirtualToPhysical)
+        {
+            viewportRc += UIControlSystem::Instance()->vcs->GetPhysicalDrawOffset();
+        }
+
+        priority += basePriority;
+        colorTexture = currentTarget.colorAttachment;
+        depthStencilTexture = currentTarget.depthAttachment.IsValid() ? currentTarget.depthAttachment : rhi::HTexture(rhi::DefaultDepthBuffer);
+        loadAction = colorLoadAction;
+
+        if (currentTarget.colorAttachment == rhi::InvalidHandle)
+        {
+            targetFormat = PixelFormat::FORMAT_RGBA8888;
+            targetWidth = Renderer::GetFramebufferWidth();
+            targetHeight = Renderer::GetFramebufferHeight();
+        }
+        else
+        {
+            targetFormat = currentTarget.format;
+            targetWidth = currentTarget.width;
+            targetHeight = currentTarget.height;
+        }
     }
 
-    bool uiDrawQueryWasOpen = FrameOcclusionQueryManager::Instance()->IsQueryOpen(FRAME_QUERY_UI_DRAW);
-    if (uiDrawQueryWasOpen)
-        FrameOcclusionQueryManager::Instance()->EndQuery(FRAME_QUERY_UI_DRAW);
+    DVASSERT(targetWidth > 0);
+    DVASSERT(targetHeight > 0);
+    DVASSERT(targetFormat != PixelFormat::FORMAT_INVALID);
 
-    PrepareFrameBufferIfNeed();
-    scene->SetMainPassViewport(viewportRc);
+    scene->SetMainRenderTarget(colorTexture, depthStencilTexture, loadAction, currentTarget.clearColor);
+    scene->SetMainPassProperties(priority, viewportRc, targetWidth, targetHeight, targetFormat);
     scene->Draw();
-
-    if (uiDrawQueryWasOpen)
-        FrameOcclusionQueryManager::Instance()->BeginQuery(FRAME_QUERY_UI_DRAW);
 
     if (drawToFrameBuffer)
     {
         RenderSystem2D::Instance()->DrawTexture(frameBuffer, RenderSystem2D::DEFAULT_2D_TEXTURE_NOBLEND_MATERIAL, Color::White, geometricData.GetUnrotatedRect(), Rect(Vector2(), fbTexSize));
     }
 }
-    
-void UI3DView::SetSize(const DAVA::Vector2 &newSize)
+
+bool UI3DView::IsClearRequested() const
+{
+    return colorLoadAction == rhi::LOADACTION_CLEAR;
+}
+
+void UI3DView::SetClearRequested(bool requested)
+{
+    if (requested)
+    {
+        colorLoadAction = rhi::LOADACTION_CLEAR;
+    }
+    else
+    {
+        colorLoadAction = rhi::LOADACTION_LOAD;
+    }
+}
+
+void UI3DView::SetSize(const DAVA::Vector2& newSize)
 {
     UIControl::SetSize(newSize);
     float32 aspect = size.dx / size.dy;
-    
-    if(scene)
+
+    if (scene)
     {
         for (int32 k = 0; k < scene->GetCameraCount(); ++k)
         {
             scene->GetCamera(k)->SetAspect(aspect);
         }
-        needUpdateFrameBuffer = true;
     }
 }
 
@@ -166,73 +203,59 @@ void UI3DView::CopyDataFrom(UIControl* srcControl)
     fbScaleFactor = srcView->fbScaleFactor;
     fbRenderSize = srcView->fbRenderSize;
     fbTexSize = srcView->fbTexSize;
-    needUpdateFrameBuffer = srcView->needUpdateFrameBuffer;
-
-    // Create FBO on first draw if need
-    needUpdateFrameBuffer = true;
 }
 
-void UI3DView::Input(UIEvent *currentInput)
+void UI3DView::Input(UIEvent* currentInput)
 {
-    if(scene)
+    if (scene != nullptr)
     {
         scene->Input(currentInput);
     }
-    
+
     UIControl::Input(currentInput);
+}
+
+void UI3DView::InputCancelled(UIEvent* currentInput)
+{
+    if (scene != nullptr)
+    {
+        scene->InputCancelled(currentInput);
+    }
+
+    UIControl::InputCancelled(currentInput);
 }
 
 void UI3DView::SetDrawToFrameBuffer(bool enable)
 {
-    if (drawToFrameBuffer != enable)
+    drawToFrameBuffer = enable;
+
+    if (!enable)
     {
-        drawToFrameBuffer = enable;
-        needUpdateFrameBuffer = true;
+        SafeRelease(frameBuffer);
     }
 }
 
 void UI3DView::SetFrameBufferScaleFactor(float32 scale)
 {
-    if (!FLOAT_EQUAL(scale, fbScaleFactor))
-    {
-        fbScaleFactor = scale;
-        needUpdateFrameBuffer = true;
-    }
+    fbScaleFactor = scale;
 }
 
 void UI3DView::PrepareFrameBuffer()
 {
     DVASSERT(scene);
 
-    if (drawToFrameBuffer)
+    fbRenderSize = UIControlSystem::Instance()->vcs->ConvertVirtualToPhysical(GetSize()) * fbScaleFactor;
+
+    if (frameBuffer == nullptr || frameBuffer->GetWidth() < fbRenderSize.dx || frameBuffer->GetHeight() < fbRenderSize.dy)
     {
-        fbRenderSize = VirtualCoordinatesSystem::Instance()->ConvertVirtualToPhysical(GetSize()) * fbScaleFactor;
-
-        if (frameBuffer == nullptr || frameBuffer->GetWidth() < fbRenderSize.dx || frameBuffer->GetHeight() < fbRenderSize.dy)
-        {
-            SafeRelease(frameBuffer);
-            frameBuffer = Texture::CreateFBO((int32)fbRenderSize.dx, (int32)fbRenderSize.dy, FORMAT_RGBA8888, true);
-        }
-
-        Vector2 fbSize = Vector2(static_cast<float32>(frameBuffer->GetWidth()), static_cast<float32>(frameBuffer->GetHeight()));
-
-        fbTexSize = fbRenderSize / fbSize;
-
-        rhi::RenderPassConfig& config = scene->GetMainPassConfig();
-        config.colorBuffer[0].texture = frameBuffer->handle;
-        config.colorBuffer[0].loadAction = rhi::LOADACTION_CLEAR;
-        config.colorBuffer[0].storeAction = rhi::STOREACTION_STORE;
-        Memcpy(config.colorBuffer[0].clearColor, Color::Clear.color, sizeof(Color));
-        config.depthStencilBuffer.texture = frameBuffer->handleDepthStencil;
-        config.depthStencilBuffer.loadAction = rhi::LOADACTION_CLEAR;
-        config.depthStencilBuffer.storeAction = rhi::STOREACTION_STORE;
-    }
-    else if (frameBuffer != nullptr)
-    {
-        rhi::RenderPassConfig& config = scene->GetMainPassConfig();
-        config.colorBuffer[0].texture = rhi::InvalidHandle;
-        config.depthStencilBuffer.texture = rhi::InvalidHandle;
         SafeRelease(frameBuffer);
+        int32 dx = static_cast<int32>(fbRenderSize.dx);
+        int32 dy = static_cast<int32>(fbRenderSize.dy);
+        frameBuffer = Texture::CreateFBO(dx, dy, FORMAT_RGBA8888, true);
     }
+
+    Vector2 fbSize = Vector2(static_cast<float32>(frameBuffer->GetWidth()), static_cast<float32>(frameBuffer->GetHeight()));
+
+    fbTexSize = fbRenderSize / fbSize;
 }
 }

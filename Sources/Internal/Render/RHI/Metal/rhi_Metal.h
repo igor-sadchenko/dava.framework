@@ -1,37 +1,8 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __RHI_METAL_H__
 #define __RHI_METAL_H__
 
 #include "../Common/rhi_Private.h"
-#include "../Common/rhi_Impl.h"
+#include "../Common/rhi_BackendImpl.h"
 #if defined __OBJC__
 #include <Metal/Metal.h>
 #endif
@@ -47,12 +18,12 @@ void metal_Initialize(const InitParam& param);
 
 namespace VertexBufferMetal
 {
-id<MTLBuffer> GetBuffer(Handle ib);
+id<MTLBuffer> GetBuffer(Handle ib, unsigned* base);
 }
 
 namespace IndexBufferMetal
 {
-id<MTLBuffer> GetBuffer(Handle ib);
+id<MTLBuffer> GetBuffer(Handle ib, unsigned* base);
 MTLIndexType GetType(Handle ib);
 }
 
@@ -65,13 +36,16 @@ namespace TextureMetal
 {
 void SetToRHIFragment(Handle tex, unsigned unitIndex, id<MTLRenderCommandEncoder> ce);
 void SetToRHIVertex(Handle tex, unsigned unitIndex, id<MTLRenderCommandEncoder> ce);
-void SetAsRenderTarget(Handle tex, MTLRenderPassDescriptor* desc);
+void SetAsRenderTarget(Handle tex, MTLRenderPassDescriptor* desc, unsigned target_i = 0);
+void SetAsResolveRenderTarget(Handle tex, MTLRenderPassDescriptor* desc);
 void SetAsDepthStencil(Handle tex, MTLRenderPassDescriptor* desc);
+void SetAsResolveDepthStencil(Handle tex, MTLRenderPassDescriptor* desc);
 }
 
 namespace PipelineStateMetal
 {
-uint32 SetToRHI(Handle ps, uint32 layoutUID, bool ds_used, id<MTLRenderCommandEncoder> ce);
+uint32 SetToRHI(Handle ps, uint32 layoutUID, const MTLPixelFormat* color_fmt, unsigned color_count, bool ds_used, id<MTLRenderCommandEncoder> ce, uint32 sampleCount);
+uint32 VertexStreamCount(Handle ps);
 }
 
 namespace DepthStencilStateMetal
@@ -90,6 +64,8 @@ void InitializeRingBuffer(uint32 size);
 void InvalidateAllInstances();
 
 void SetToRHI(Handle buf, unsigned bufIndex, id<MTLRenderCommandEncoder> ce);
+unsigned Instance(Handle buf);
+void SetToRHI(Handle buf, unsigned bufIndex, unsigned instOffset, id<MTLRenderCommandEncoder> ce);
 }
 
 
@@ -109,10 +85,17 @@ namespace QueryBufferMetal
 {
 void SetupDispatch(Dispatch* dispatch);
 }
+namespace PerfQueryMetal
+{
+void SetupDispatch(Dispatch* dispatch);
+}
 namespace TextureMetal
 {
 void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
+unsigned NeedRestoreCount();
+void MarkAllNeedRestore();
+void ReCreateAll();
 }
 namespace SamplerStateMetal
 {
@@ -130,6 +113,7 @@ namespace ConstBufferMetal
 {
 void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
+void ResetRingBuffer();
 }
 namespace RenderPassMetal
 {

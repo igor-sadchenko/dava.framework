@@ -1,31 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
 #include "Base/Platform.h"
 
 #if defined(__DAVAENGINE_WIN_UAP__)
@@ -34,34 +6,23 @@
 #include <winsock2.h>
 #include <collection.h>
 
+#include "Logger/Logger.h"
 #include "Debug/DVAssert.h"
 #include "FileSystem/FileSystem.h"
 #include "Utils/MD5.h"
 #include "Utils/StringFormat.h"
 #include "Utils/Utils.h"
+#include "Utils/UTF8Utils.h"
 #include "Base/GlobalEnum.h"
 
+#include "Engine/Engine.h"
+#include "Engine/Private/UWP/PlatformCoreUWP.h"
 #include "Platform/TemplateWin32/DeviceInfoWinUAP.h"
 
 __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__MARKER__
 #include "Platform/TemplateWin32/CorePlatformWinUAP.h"
-const wchar_t* KOSTIL_SURFACE_MOUSE =    L"NTRG0001";
+const wchar_t* KOSTIL_SURFACE_MOUSE = L"NTRG0001";
 const wchar_t* KOSTIL_SURFACE_KEYBOARD = L"MSHW0029";
-
-using namespace ::Windows::UI::Core;
-using namespace ::Windows::Graphics::Display;
-using namespace ::Windows::Devices::Input;
-using namespace ::Windows::UI::ViewManagement;
-using namespace ::Windows::Foundation;
-using namespace ::Windows::Devices;
-using namespace ::Windows::Devices::Enumeration;
-using namespace ::Windows::Devices::HumanInterfaceDevice;
-using namespace ::Windows::Security::ExchangeActiveSyncProvisioning;
-using namespace ::Windows::Networking::Connectivity;
-using namespace ::Windows::System::UserProfile;
-using namespace ::Windows::UI::Xaml;
-using namespace ::Windows::System::Profile;
-using namespace ::Windows::Globalization;
 
 namespace DAVA
 {
@@ -73,6 +34,19 @@ const char* DEFAULT_TOUCH_ID = "touchId";
 
 DeviceInfoPrivate::DeviceInfoPrivate()
 {
+    using ::Windows::Foundation::Metadata::ApiInformation;
+    using ::Windows::Devices::Input::TouchCapabilities;
+    using ::Windows::System::Profile::AnalyticsInfo;
+    using ::Windows::System::Profile::AnalyticsVersionInfo;
+    using ::Windows::System::UserProfile::AdvertisingManager;
+    using ::Windows::Security::ExchangeActiveSyncProvisioning::EasClientDeviceInformation;
+
+#if defined(__DAVAENGINE_COREV2__)
+    isMobileMode = Private::PlatformCore::IsPhoneContractPresent();
+#else
+    isMobileMode = ApiInformation::IsApiContractPresent("Windows.Phone.PhoneContract", 1);
+#endif
+    platform = isMobileMode ? DeviceInfo::PLATFORM_PHONE_WIN_UAP : DeviceInfo::PLATFORM_DESKTOP_WIN_UAP;
     TouchCapabilities touchCapabilities;
     isTouchPresent = (1 == touchCapabilities.TouchPresent); //  Touch is always present in MSVS simulator
     if (isTouchPresent)
@@ -81,29 +55,96 @@ DeviceInfoPrivate::DeviceInfoPrivate()
         Set<String>& setIdDevices = (*(hidsAccessor))[TOUCH];
         setIdDevices.emplace(DEFAULT_TOUCH_ID);
     }
-    isMobileMode = Windows::Foundation::Metadata::ApiInformation::IsApiContractPresent("Windows.Phone.PhoneContract", 1);
-    platform = isMobileMode ? DeviceInfo::PLATFORM_PHONE_WIN_UAP : DeviceInfo::PLATFORM_DESKTOP_WIN_UAP;
 
     AnalyticsVersionInfo ^ versionInfo = AnalyticsInfo::VersionInfo;
     Platform::String ^ deviceVersion = versionInfo->DeviceFamilyVersion;
     Platform::String ^ deviceFamily = versionInfo->DeviceFamily;
-    String vertionString = RTStringToString(deviceVersion);
-    int64 versionInt = _atoi64(vertionString.c_str());
+    String versionString = UTF8Utils::EncodeToUTF8(deviceVersion->Data());
+    int64 versionInt = _atoi64(versionString.c_str());
     std::stringstream versionStream;
     versionStream << ((versionInt & 0xFFFF000000000000L) >> 48) << ".";
     versionStream << ((versionInt & 0x0000FFFF00000000L) >> 32) << ".";
     versionStream << ((versionInt & 0x00000000FFFF0000L) >> 16) << ".";
     versionStream << (versionInt & 0x000000000000FFFFL);
     version = versionStream.str();
-    platformString = RTStringToString(versionInfo->DeviceFamily);
+    platformString = UTF8Utils::EncodeToUTF8(versionInfo->DeviceFamily->Data());
 
-    EasClientDeviceInformation deviceInfo;
-    manufacturer = RTStringToString(deviceInfo.SystemManufacturer);
-    modelName = RTStringToString(deviceInfo.SystemSku);
-    deviceName = WideString(deviceInfo.FriendlyName->Data());
+    // get device Manufacturer/ProductName/Name
+    {
+        EasClientDeviceInformation deviceInfo;
+
+        // MSDN says SystemManufacturer can be empty, so we have to check it
+        if (!deviceInfo.SystemManufacturer->IsEmpty())
+        {
+            manufacturer = UTF8Utils::EncodeToUTF8(deviceInfo.SystemManufacturer->Data());
+        }
+
+        // MSDN says SystemProductName can be empty, so we have to check it
+        if (!deviceInfo.SystemProductName->IsEmpty())
+        {
+            // MSDN recommends to use deviceInfo.SystemSku and use deviceInfo.SystemProductName
+            // only in case when SystemSku is empty.
+            //
+            // In good cases deviceInfo.SystemSku is something like "XIAOMITEST MI4", while
+            // deviceInfo.SystemManufacturer = "XIAOMITEST" and deviceInfo.SystemProductName = "MI4".
+            // But in real life this SystemSku field can contain some unpredictable information,
+            // e.g. "To be filled by O.E.M." or "<FF><FF><FF>...".
+            //
+            // So we prefer to use deviceInfo.SystemProductName instead of recommended deviceInfo.SystemSku
+            modelName = UTF8Utils::EncodeToUTF8(deviceInfo.SystemProductName->Data());
+        }
+
+        // MSDN says deviceInfo.FriendlyName shouldn't be empty
+        deviceName = WideString(deviceInfo.FriendlyName->Data());
+    }
+
+    try
+    {
+        uDID = UTF8Utils::EncodeToUTF8(AdvertisingManager::AdvertisingId->Data());
+    }
+    catch (Platform::Exception ^ e)
+    {
+        Logger::Error("[DeviceInfo] failed to get AdvertisingId: hresult=0x%08X, message=%s", e->HResult, UTF8Utils::EncodeToUTF8(e->Message->Data()).c_str());
+    }
     gpu = GPUFamily();
-    uDID = RTStringToString(Windows::System::UserProfile::AdvertisingManager::AdvertisingId);
+    if (isMobileMode)
+    {
+        InitCarrierLinesAsync();
+    }
+
+#if defined(__DAVAENGINE_COREV2__)
+    if (isMobileMode)
+    {
+        // DeviceInfoPrivate constructor must be called in UI thread and DeviceInfo is explicitly instantiated in PlatformCore::OnLaunchedOrActivated
+        // file Engine/Private/UWP/PlatformCoreUWP.cpp
+        CheckContinuumMode();
+
+        using namespace ::Windows::Foundation;
+        using namespace ::Windows::UI::Core;
+        // Windows does not provide triggers to detect whether device has entered or left Continuum mode.
+        // Then connect to CoreWindow::SizeChanged event and check UserInteractionMode
+        // http://stackoverflow.com/questions/34115039/how-do-i-detect-that-the-windows-mobile-transitioned-to-continuum-mode
+        CoreWindow::GetForCurrentThread()->SizeChanged += ref new TypedEventHandler<CoreWindow ^, WindowSizeChangedEventArgs ^>([this](CoreWindow ^, WindowSizeChangedEventArgs ^ ) {
+            CheckContinuumMode();
+        });
+    }
+    CreateAndStartHIDWatcher();
+#endif
 }
+
+#if defined(__DAVAENGINE_COREV2__)
+void DeviceInfoPrivate::CheckContinuumMode()
+{
+    using namespace ::Windows::UI::ViewManagement;
+    UserInteractionMode mode = UIViewSettings::GetForCurrentView()->UserInteractionMode;
+    bool detectedContinuumMode = mode == UserInteractionMode::Mouse;
+    if (detectedContinuumMode != isContinuumMode)
+    {
+        isContinuumMode = detectedContinuumMode;
+        NotifyAllClients(TOUCH, !isContinuumMode);
+    }
+}
+#endif
 
 DeviceInfo::ePlatform DeviceInfoPrivate::GetPlatform()
 {
@@ -132,28 +173,32 @@ String DeviceInfoPrivate::GetModel()
 
 String DeviceInfoPrivate::GetLocale()
 {
+    using ::Windows::System::UserProfile::GlobalizationPreferences;
     return RTStringToString(GlobalizationPreferences::Languages->GetAt(0));
 }
 
 String DeviceInfoPrivate::GetRegion()
 {
+    using ::Windows::System::UserProfile::GlobalizationPreferences;
     return RTStringToString(GlobalizationPreferences::HomeGeographicRegion);
 }
 
 String DeviceInfoPrivate::GetTimeZone()
 {
+    using ::Windows::Globalization::Calendar;
+
     Calendar calendar;
     return RTStringToString(calendar.GetTimeZone());
 }
 
 String DeviceInfoPrivate::GetHTTPProxyHost()
 {
-    return "Not yet implemented";
+    return "";
 }
 
 String DeviceInfoPrivate::GetHTTPNonProxyHosts()
 {
-    return "Not yet implemented";
+    return "";
 }
 
 int DeviceInfoPrivate::GetHTTPProxyPort()
@@ -161,10 +206,12 @@ int DeviceInfoPrivate::GetHTTPProxyPort()
     return 0;
 }
 
+#if !defined(__DAVAENGINE_COREV2__)
 DeviceInfo::ScreenInfo& DeviceInfoPrivate::GetScreenInfo()
 {
     return screenInfo;
 }
+#endif
 
 int DeviceInfoPrivate::GetZBufferSize()
 {
@@ -181,60 +228,99 @@ WideString DeviceInfoPrivate::GetName()
     return deviceName;
 }
 
-eGPUFamily DeviceInfoPrivate::GetGPUFamily()
-{   
+eGPUFamily DeviceInfoPrivate::GetGPUFamilyImpl()
+{
     return gpu;
 }
 
 DeviceInfo::NetworkInfo DeviceInfoPrivate::GetNetworkInfo()
 {
+    using ::Windows::Networking::Connectivity::NetworkInformation;
+    using ::Windows::Networking::Connectivity::ConnectionProfile;
+    using ::Windows::Networking::Connectivity::NetworkAdapter;
+
     DeviceInfo::NetworkInfo networkInfo;
-    ConnectionProfile^ icp = NetworkInformation::GetInternetConnectionProfile();
-    if (icp != nullptr && icp->NetworkAdapter != nullptr)
+    ConnectionProfile ^ icp = NetworkInformation::GetInternetConnectionProfile();
+    if (icp != nullptr)
     {
-        if (icp->IsWlanConnectionProfile)
+        NetworkAdapter ^ networkAdapter = nullptr;
+
+        // Even though it's not documented, NetworkAdapter property getter can throw an exception
+        try
         {
-            networkInfo.networkType = DeviceInfo::NETWORK_TYPE_WIFI;
+            networkAdapter = icp->NetworkAdapter;
         }
-        else if (icp->IsWwanConnectionProfile)
+        catch (Platform::Exception ^ e)
         {
-            networkInfo.networkType = DeviceInfo::NETWORK_TYPE_CELLULAR;
+            Logger::Error("[DeviceInfo] failed to get NetworkAdapter: hresult=0x%08X, message=%s", e->HResult, UTF8Utils::EncodeToUTF8(e->Message->Data()).c_str());
         }
-        else
+
+        if (networkAdapter != nullptr)
         {
-            // in other case Ethernet
-            networkInfo.networkType = DeviceInfo::NETWORK_TYPE_ETHERNET;
+            if (icp->IsWlanConnectionProfile)
+            {
+                networkInfo.networkType = DeviceInfo::NETWORK_TYPE_WIFI;
+            }
+            else if (icp->IsWwanConnectionProfile)
+            {
+                networkInfo.networkType = DeviceInfo::NETWORK_TYPE_CELLULAR;
+            }
+            else
+            {
+                // in other case Ethernet
+                networkInfo.networkType = DeviceInfo::NETWORK_TYPE_ETHERNET;
+            }
         }
     }
+
     return networkInfo;
 }
 
+#if !defined(__DAVAENGINE_COREV2__)
 // temporary decision
-void DeviceInfoPrivate::InitializeScreenInfo()
+void DeviceInfoPrivate::InitializeScreenInfo(const DeviceInfo::ScreenInfo& screenInfo_, bool fullInit)
 {
+    using ::Windows::UI::ViewManagement::UIViewSettings;
+    using ::Windows::UI::ViewManagement::UserInteractionMode;
+
     __DAVAENGINE_WIN_UAP_INCOMPLETE_IMPLEMENTATION__MARKER__
-    
+
+    if (screenInfo_.width > 0 && screenInfo_.height > 0)
+    {
+        screenInfo = screenInfo_;
+    }
+
+    // First time InitializeScreenInfo is called before dava thread and dispatcher are created
+    // so use this flag to leave function
+    if (!fullInit)
+    {
+        return;
+    }
+
     CorePlatformWinUAP* core = static_cast<CorePlatformWinUAP*>(Core::Instance());
     DVASSERT(nullptr != core && "DeviceInfo::InitializeScreenInfo(): Core::Instance() is null");
 
     auto func = [this]() {
         // should be started on UI thread
-        CoreWindow ^ coreWindow = Window::Current->CoreWindow;
-        DVASSERT(coreWindow != nullptr);
-
-        screenInfo.width = static_cast<int32>(coreWindow->Bounds.Width);
-        screenInfo.height = static_cast<int32>(coreWindow->Bounds.Height);
-
-        DisplayInformation^ displayInfo = DisplayInformation::GetForCurrentView();
-        DVASSERT(displayInfo != nullptr);
-        screenInfo.scale = static_cast<float32>(displayInfo->RawPixelsPerViewPixel);
-        DisplayOrientations curOrientation = DisplayInformation::GetForCurrentView()->CurrentOrientation;
-        if (DisplayOrientations::Portrait == curOrientation || DisplayOrientations::PortraitFlipped == curOrientation)
+        //  in Continuum mode, we don't have touch
+        if (isMobileMode)
         {
-            std::swap(screenInfo.width, screenInfo.height);
+            bool last = isContinuumMode;
+            if (UserInteractionMode::Mouse == UIViewSettings::GetForCurrentView()->UserInteractionMode)
+            {
+                isContinuumMode = true;
+            }
+            else
+            {
+                isContinuumMode = false;
+            }
+            if (last != isContinuumMode)
+            {
+                NotifyAllClients(TOUCH, !isContinuumMode);
+            }
         }
     };
-    core->RunOnUIThreadBlocked(func);
+    core->RunOnUIThread(func);
     // start device watchers, after creation main thread dispatcher
     if (!watchersCreated)
     {
@@ -242,6 +328,7 @@ void DeviceInfoPrivate::InitializeScreenInfo()
         watchersCreated = true;
     }
 }
+#endif // !__DAVAENGINE_COREV2__
 
 bool FillStorageSpaceInfo(DeviceInfo::StorageInfo& storage_info)
 {
@@ -250,7 +337,7 @@ bool FillStorageSpaceInfo(DeviceInfo::StorageInfo& storage_info)
     ULARGE_INTEGER totalNumberOfFreeBytes;
 
     BOOL res = ::GetDiskFreeSpaceExA(storage_info.path.GetAbsolutePathname().c_str(),
-        &freeBytesAvailable, &totalNumberOfBytes, &totalNumberOfFreeBytes);
+                                     &freeBytesAvailable, &totalNumberOfBytes, &totalNumberOfFreeBytes);
 
     if (res == FALSE)
         return false;
@@ -263,7 +350,7 @@ bool FillStorageSpaceInfo(DeviceInfo::StorageInfo& storage_info)
 
 List<DeviceInfo::StorageInfo> DeviceInfoPrivate::GetStoragesList()
 {
-    using namespace Windows::Storage;
+    using ::Windows::Storage::KnownFolders;
 
     List<DeviceInfo::StorageInfo> result;
     FileSystem* fileSystem = FileSystem::Instance();
@@ -284,8 +371,8 @@ List<DeviceInfo::StorageInfo> DeviceInfoPrivate::GetStoragesList()
     auto removableStorages = WaitAsync(KnownFolders::RemovableDevices->GetFoldersAsync());
     for (unsigned i = 0; i < removableStorages->Size; ++i)
     {
-        Platform::String^ path = removableStorages->GetAt(i)->Path;
-        storage.path = FilePath::FromNativeString(path->Data());
+        Platform::String ^ path = removableStorages->GetAt(i)->Path;
+        storage.path = UTF8Utils::EncodeToUTF8(path->Data());
         if (FillStorageSpaceInfo(storage))
         {
             result.push_back(storage);
@@ -299,7 +386,12 @@ List<DeviceInfo::StorageInfo> DeviceInfoPrivate::GetStoragesList()
 
 bool DeviceInfoPrivate::IsHIDConnected(DeviceInfo::eHIDType type)
 {
-    auto func = [type](HIDConvPair pair)->bool {
+    // continuum mode don't have touch
+    if (DeviceInfo::HID_TOUCH_TYPE == type && isContinuumMode)
+    {
+        return false;
+    }
+    auto func = [type](HIDConvPair pair) -> bool {
         return pair.second == type;
     };
     auto it = std::find_if(HidConvSet.begin(), HidConvSet.end(), func);
@@ -308,21 +400,32 @@ bool DeviceInfoPrivate::IsHIDConnected(DeviceInfo::eHIDType type)
 
 bool DeviceInfoPrivate::IsTouchPresented()
 {
-    return isTouchPresent; //  Touch is always present in MSVS simulator
+    return isTouchPresent && !isContinuumMode; //  Touch is always present in MSVS simulator
+}
+
+String DeviceInfoPrivate::GetCarrierName()
+{
+    if (nullptr == carrierName)
+    {
+        return "";
+    }
+    return UTF8Utils::EncodeToUTF8(carrierName->Data());
 }
 
 void DeviceInfoPrivate::NotifyAllClients(NativeHIDType type, bool isConnected)
 {
-    auto func = [type](HIDConvPair pair)->bool {
+    auto func = [type](HIDConvPair pair) -> bool {
         return pair.first == type;
     };
     DeviceInfo::eHIDType hidType = std::find_if(HidConvSet.begin(), HidConvSet.end(), func)->second;
 
-    //pass notification in main thread
-    CorePlatformWinUAP* core = static_cast<CorePlatformWinUAP*>(Core::Instance());
-
     DeviceInfo::HIDConnectionSignal* signal = &GetHIDConnectionSignal(hidType);
+#if defined(__DAVAENGINE_COREV2__)
+    RunOnMainThreadAsync([=] { signal->Emit(hidType, isConnected); });
+#else
+    CorePlatformWinUAP* core = static_cast<CorePlatformWinUAP*>(Core::Instance());
     core->RunOnMainThread([=] { signal->Emit(hidType, isConnected); });
+#endif // !__DAVAENGINE_COREV2__
 }
 
 eGPUFamily DeviceInfoPrivate::GPUFamily()
@@ -330,11 +433,94 @@ eGPUFamily DeviceInfoPrivate::GPUFamily()
     return GPU_DX11;
 }
 
-DeviceWatcher^ DeviceInfoPrivate::CreateDeviceWatcher(NativeHIDType type)
+void DeviceInfoPrivate::InitCarrierLinesAsync()
 {
+    auto asyncTask = ::concurrency::create_task([this]() {
+        try
+        {
+            using ::Windows::ApplicationModel::Calls::PhoneLine;
+            using ::Windows::ApplicationModel::Calls::PhoneCallManager;
+            using ::Windows::ApplicationModel::Calls::PhoneLineWatcher;
+            using ::Windows::ApplicationModel::Calls::PhoneLineWatcherEventArgs;
+            using ::Windows::Foundation::TypedEventHandler;
+            phoneCallStore = WaitAsync(PhoneCallManager::RequestStoreAsync());
+            watcher = phoneCallStore->RequestLineWatcher();
+
+            Platform::Guid defaultGuid = WaitAsync(phoneCallStore->GetDefaultLineAsync());
+            PhoneLine ^ defaultLine = WaitAsync(PhoneLine::FromIdAsync(defaultGuid));
+            // can't do it on main thread, main dispatcher not ready
+            carrierName = defaultLine->NetworkName;
+
+            auto lineAdded = ref new TypedEventHandler<PhoneLineWatcher ^, PhoneLineWatcherEventArgs ^>([this](PhoneLineWatcher ^, PhoneLineWatcherEventArgs ^ args) {
+                OnCarrierLineAdded(args);
+            });
+            auto completed = ref new TypedEventHandler<PhoneLineWatcher ^, Platform::Object ^>([this](PhoneLineWatcher ^, Platform::Object ^ ) {
+                watcher = nullptr;
+            });
+
+            watcher->LineAdded += lineAdded;
+            watcher->EnumerationCompleted += completed;
+            watcher->Start();
+        }
+        catch (Platform::COMException ^ e)
+        {
+            String str = UTF8Utils::EncodeToUTF8(e->Message->Data());
+            Logger::Error("Error msg = %s, added <uap:Capability Name=\"phoneCall\" /> capabilities in Package.appxmanifest", str.c_str());
+        }
+    });
+}
+
+void DeviceInfoPrivate::OnCarrierLineAdded(::Windows::ApplicationModel::Calls::PhoneLineWatcherEventArgs ^ args)
+{
+    using ::Windows::ApplicationModel::Calls::PhoneLine;
+    using ::Windows::ApplicationModel::Calls::PhoneLineTransport;
+    using ::Windows::Foundation::TypedEventHandler;
+
+    PhoneLine ^ line = WaitAsync(PhoneLine::FromIdAsync(args->LineId));
+    if ((nullptr != line) && (line->Transport == PhoneLineTransport::Cellular))
+    {
+        phoneLines.insert(std::make_pair(line->Id, line));
+        auto lineChange = ref new TypedEventHandler<PhoneLine ^, Platform::Object ^>([this](PhoneLine ^ line, Platform::Object ^ ) {
+            OnCarrierLineChange(line);
+        });
+        line->LineChanged += lineChange;
+    }
+}
+
+void DeviceInfoPrivate::OnCarrierLineChange(::Windows::ApplicationModel::Calls::PhoneLine ^ line)
+{
+    using ::Windows::ApplicationModel::Calls::PhoneCallStore;
+    using ::Windows::ApplicationModel::Calls::PhoneCallManager;
+    Platform::Guid guid = WaitAsync(phoneCallStore->GetDefaultLineAsync());
+    if (guid == line->Id)
+    {
+#if defined(__DAVAENGINE_COREV2__)
+        RunOnMainThreadAsync([=] {
+#else
+        CorePlatformWinUAP* core = static_cast<CorePlatformWinUAP*>(Core::Instance());
+        core->RunOnMainThread([=] {
+#endif
+            // must run on main thread
+            if ((nullptr != line->NetworkName) && (line->NetworkName != carrierName))
+            {
+                carrierName = line->NetworkName;
+                DeviceInfo::carrierNameChanged.Emit(UTF8Utils::EncodeToUTF8(carrierName->Data()));
+            }
+        });
+    }
+}
+
+::Windows::Devices::Enumeration::DeviceWatcher ^ DeviceInfoPrivate::CreateDeviceWatcher(NativeHIDType type)
+{
+    using ::Windows::Foundation::TypedEventHandler;
+    using ::Windows::Devices::Enumeration::DeviceWatcher;
+    using ::Windows::Devices::Enumeration::DeviceInformation;
+    using ::Windows::Devices::Enumeration::DeviceInformationUpdate;
+    using ::Windows::Devices::HumanInterfaceDevice::HidDevice;
+
     hids.GetAccessor()->emplace(type, Set<String>());
-    DeviceWatcher^ watcher = nullptr;
-    Platform::Collections::Vector<Platform::String^>^ requestedProperties = ref new Platform::Collections::Vector<Platform::String^>();
+    DeviceWatcher ^ watcher = nullptr;
+    Platform::Collections::Vector<Platform::String ^> ^ requestedProperties = ref new Platform::Collections::Vector<Platform::String ^>();
     requestedProperties->Append("System.Devices.InterfaceClassGuid");
     requestedProperties->Append("System.ItemNameDisplay");
     if (MOUSE == type)
@@ -353,10 +539,10 @@ DeviceWatcher^ DeviceInfoPrivate::CreateDeviceWatcher(NativeHIDType type)
     {
         watcher = DeviceInformation::CreateWatcher(HidDevice::GetDeviceSelector(USAGE_PAGE, type));
     }
-    auto added = ref new TypedEventHandler<DeviceWatcher^, DeviceInformation^>([this, type](DeviceWatcher^ watcher, DeviceInformation^ information) {
+    auto added = ref new TypedEventHandler<DeviceWatcher ^, DeviceInformation ^>([this, type](DeviceWatcher ^ watcher, DeviceInformation ^ information) {
         OnDeviceAdded(type, information);
     });
-    auto removed = ref new TypedEventHandler<DeviceWatcher^ , DeviceInformationUpdate^>([this, type](DeviceWatcher^ watcher, DeviceInformationUpdate^ information) {
+    auto removed = ref new TypedEventHandler<DeviceWatcher ^, DeviceInformationUpdate ^>([this, type](DeviceWatcher ^ watcher, DeviceInformationUpdate ^ information) {
         OnDeviceRemoved(type, information);
     });
     auto updated = ref new TypedEventHandler<DeviceWatcher ^, DeviceInformationUpdate ^>([this, type](DeviceWatcher ^ watcher, DeviceInformationUpdate ^ information) {
@@ -384,7 +570,7 @@ void DeviceInfoPrivate::CreateAndStartHIDWatcher()
     watchers.emplace_back(CreateDeviceWatcher(TOUCH));
 }
 
-void DeviceInfoPrivate::OnDeviceAdded(NativeHIDType type, DeviceInformation^ information)
+void DeviceInfoPrivate::OnDeviceAdded(NativeHIDType type, ::Windows::Devices::Enumeration::DeviceInformation ^ information)
 {
     if (!information->IsEnabled)
     {
@@ -417,7 +603,7 @@ void DeviceInfoPrivate::OnDeviceAdded(NativeHIDType type, DeviceInformation^ inf
     }
 }
 
-void DeviceInfoPrivate::OnDeviceRemoved(NativeHIDType type, DeviceInformationUpdate^ information)
+void DeviceInfoPrivate::OnDeviceRemoved(NativeHIDType type, ::Windows::Devices::Enumeration::DeviceInformationUpdate ^ information)
 {
     String id = RTStringToString(information->Id);
     auto hidsAccessor(hids.GetAccessor());
@@ -430,8 +616,10 @@ void DeviceInfoPrivate::OnDeviceRemoved(NativeHIDType type, DeviceInformationUpd
     }
 }
 
-void DeviceInfoPrivate::OnDeviceUpdated(NativeHIDType type, DeviceInformationUpdate ^ information)
+void DeviceInfoPrivate::OnDeviceUpdated(NativeHIDType type, ::Windows::Devices::Enumeration::DeviceInformationUpdate ^ information)
 {
+    using ::Windows::Devices::Input::TouchCapabilities;
+
     auto hidsAccessor(hids.GetAccessor());
     Set<String>& setIdDevices = (*(hidsAccessor))[type];
     if (TOUCH == type)
@@ -462,11 +650,11 @@ void DeviceInfoPrivate::OnDeviceUpdated(NativeHIDType type, DeviceInformationUpd
             {
                 isEnabled = safe_cast<bool>(properties->Lookup(L"System.Devices.InterfaceEnabled"));
             }
-            catch (Platform::InvalidCastException^ e)
+            catch (Platform::InvalidCastException ^ e)
             {
                 Logger::FrameworkDebug("DeviceInfoPrivate::OnDeviceUpdated. Can't cast System.Devices.InterfaceEnabled.");
             }
-            catch (Platform::OutOfBoundsException^ e)
+            catch (Platform::OutOfBoundsException ^ e)
             {
                 Logger::FrameworkDebug("DeviceInfoPrivate::OnDeviceUpdated. OutOfBoundsException.");
             }
@@ -498,7 +686,6 @@ bool DeviceInfoPrivate::IsEnabled(NativeHIDType type)
     Set<String>& setIdDevices = (*(hidsAccessor))[type];
     return (setIdDevices.size() > 0);
 }
-
 }
 
-#endif // defined(__DAVAENGINE_WIN_UAP__)
+#endif // __DAVAENGINE_WIN_UAP__

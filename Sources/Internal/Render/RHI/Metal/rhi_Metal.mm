@@ -1,68 +1,46 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
+#include "Logger/Logger.h"
+#include "../Common/rhi_Private.h"
+#include "../Common/rhi_Pool.h"
+#include "../Common/dbg_StatSet.h"
+#include "../rhi_Public.h"
+#include "rhi_Metal.h"
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
+#include "_metal.h"
 
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-    #include "../Common/rhi_Private.h"
-    #include "../Common/rhi_Pool.h"
-    #include "../Common/dbg_StatSet.h"
-    #include "../rhi_Public.h"
-    #include "rhi_Metal.h"
-
-    #include "_metal.h"
+#import <UIKit/UIKit.h>
 
 #if !(TARGET_IPHONE_SIMULATOR == 1)
 
+namespace rhi
+{
 id<MTLDevice> _Metal_Device = nil;
 id<MTLCommandQueue> _Metal_DefCmdQueue = nil;
-MTLRenderPassDescriptor* _Metal_DefRenderPassDescriptor = nil;
 id<MTLTexture> _Metal_DefFrameBuf = nil;
 id<MTLTexture> _Metal_DefDepthBuf = nil;
 id<MTLTexture> _Metal_DefStencilBuf = nil;
 id<MTLDepthStencilState> _Metal_DefDepthState = nil;
 CAMetalLayer* _Metal_Layer = nil;
+DAVA::Semaphore* _Metal_DrawableDispatchSemaphore = nullptr; //used to prevent building command buffers
+const uint32 _Metal_DrawableDispatchSemaphoreFrameCount = 4;
 
-namespace rhi
-{
+//We provide consts-data for metal directly from buffer, so we have to store consts-data for 3 frames.
+//Also now metal can work in render-thread and we have to store one more frame data.
+static const DAVA::uint32 METAL_CONSTS_RING_BUFFER_CAPACITY_MULTIPLIER = 4;
+
+InitParam _Metal_InitParam;
+
 Dispatch DispatchMetal = { 0 };
-
-RenderDeviceCaps _metal_DeviceCaps;
 
 //------------------------------------------------------------------------------
 
-static Api
-metal_HostApi()
+static Api metal_HostApi()
 {
     return RHI_METAL;
 }
 
 //------------------------------------------------------------------------------
 
-static bool
-metal_TextureFormatSupported(TextureFormat format)
+static bool metal_TextureFormatSupported(TextureFormat format, ProgType)
 {
     bool supported = false;
 
@@ -76,12 +54,12 @@ metal_TextureFormatSupported(TextureFormat format)
 
     case TEXTURE_FORMAT_PVRTC_4BPP_RGBA:
     case TEXTURE_FORMAT_PVRTC_2BPP_RGBA:
-
+    /*
     case TEXTURE_FORMAT_PVRTC2_4BPP_RGB:
     case TEXTURE_FORMAT_PVRTC2_4BPP_RGBA:
     case TEXTURE_FORMAT_PVRTC2_2BPP_RGB:
     case TEXTURE_FORMAT_PVRTC2_2BPP_RGBA:
-
+*/
     case TEXTURE_FORMAT_ETC2_R8G8B8:
     case TEXTURE_FORMAT_ETC2_R8G8B8A1:
     case TEXTURE_FORMAT_EAC_R11_UNSIGNED:
@@ -101,86 +79,82 @@ metal_TextureFormatSupported(TextureFormat format)
 
 //------------------------------------------------------------------------------
 
-static void
-metal_Uninitialize()
+static void metal_Uninitialize()
+{
+    if (_Metal_DrawableDispatchSemaphore != nullptr)
+        _Metal_DrawableDispatchSemaphore->Post(_Metal_DrawableDispatchSemaphoreFrameCount); //resume render thread if parked there
+}
+
+//------------------------------------------------------------------------------
+
+static bool metal_NeedRestoreResources()
+{
+    static bool lastNeedRestore = false;
+    bool needRestore = TextureMetal::NeedRestoreCount();
+
+    if (needRestore)
+        DAVA::Logger::Debug("NeedRestore %d TEX", TextureMetal::NeedRestoreCount());
+
+    if (lastNeedRestore && !needRestore)
+        DAVA::Logger::Debug("all RHI-resources restored");
+
+    lastNeedRestore = needRestore;
+
+    return needRestore;
+}
+
+//------------------------------------------------------------------------------
+
+static void metal_SynchronizeCPUGPU(uint64* cpuTimestamp, uint64* gpuTimestamp)
 {
 }
 
 //------------------------------------------------------------------------------
 
-static void
-metal_Reset(const ResetParam& param)
+bool rhi_MetalIsSupported()
 {
+    if (!_Metal_Device)
+    {
+        NSString* currSysVer = [[UIDevice currentDevice] systemVersion];
+        if ([currSysVer compare:@"8.0" options:NSNumericSearch] != NSOrderedAscending)
+        {
+            _Metal_Device = MTLCreateSystemDefaultDevice();
+            [_Metal_Device retain];
+        }
+    }
+
+    return (_Metal_Device) ? true : false;
+    //    return [[UIDevice currentDevice].systemVersion floatValue] >= 8.0;
 }
 
-//------------------------------------------------------------------------------
-
-static const RenderDeviceCaps&
-metal_DeviceCaps()
+void Metal_InitContext()
 {
-    return _metal_DeviceCaps;
-}
+    _Metal_Layer = static_cast<CAMetalLayer*>(_Metal_InitParam.window);
+    [_Metal_Layer retain];
 
-//------------------------------------------------------------------------------
+    if (!_Metal_Device)
+    {
+        _Metal_Device = MTLCreateSystemDefaultDevice();
+        [_Metal_Device retain];
+    }
 
-static bool
-metal_NeedRestoreResources()
-{
-    return false;
-}
-
-static void
-metal_Suspend()
-{
-}
-
-static void
-metal_Resume()
-{
-}
-
-//------------------------------------------------------------------------------
-
-void metal_Initialize(const InitParam& param)
-{
-    _Metal_Layer = (CAMetalLayer*)param.window;
-
-    _Metal_Layer.device = MTLCreateSystemDefaultDevice();
+    _Metal_Layer.device = _Metal_Device;
     _Metal_Layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     _Metal_Layer.framebufferOnly = YES;
-    _Metal_Layer.drawableSize = CGSizeMake((CGFloat)param.width, (CGFloat)param.height);
+    _Metal_Layer.drawableSize = CGSizeMake((CGFloat)_Metal_InitParam.width, (CGFloat)_Metal_InitParam.height);
 
-    _Metal_Device = _Metal_Layer.device;
     _Metal_DefCmdQueue = [_Metal_Device newCommandQueue];
 
     // create frame-buffer
 
-    int w = param.width;
-    int h = param.height;
+    int w = _Metal_InitParam.width;
+    int h = _Metal_InitParam.height;
 
-    MTLTextureDescriptor* colorDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:w height:h mipmapped:NO];
     MTLTextureDescriptor* depthDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float width:w height:h mipmapped:NO];
     MTLTextureDescriptor* stencilDesc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatStencil8 width:w height:h mipmapped:NO];
 
-    _Metal_DefFrameBuf = [_Metal_Device newTextureWithDescriptor:colorDesc];
     _Metal_DefDepthBuf = [_Metal_Device newTextureWithDescriptor:depthDesc];
     _Metal_DefStencilBuf = [_Metal_Device newTextureWithDescriptor:stencilDesc];
-
-    // create default render-pass desc
-
-    MTLRenderPassDescriptor* desc = [MTLRenderPassDescriptor renderPassDescriptor];
-
-    desc.colorAttachments[0].texture = _Metal_DefFrameBuf;
-    desc.colorAttachments[0].loadAction = MTLLoadActionClear;
-    desc.colorAttachments[0].storeAction = MTLStoreActionStore;
-    desc.colorAttachments[0].clearColor = MTLClearColorMake(0.3, 0.3, 0.6, 1);
-
-    desc.depthAttachment.texture = _Metal_DefDepthBuf;
-    desc.depthAttachment.loadAction = MTLLoadActionClear;
-    desc.depthAttachment.storeAction = MTLStoreActionStore;
-    desc.depthAttachment.clearDepth = 1.0f;
-
-    _Metal_DefRenderPassDescriptor = desc;
 
     // create default depth-state
 
@@ -191,10 +165,49 @@ void metal_Initialize(const InitParam& param)
 
     _Metal_DefDepthState = [_Metal_Device newDepthStencilStateWithDescriptor:depth_desc];
 
-    int ringBufferSize = 4 * 1024 * 1024;
+    NSString* reqSysVer = @"10.0";
+    NSString* currSysVer = [[UIDevice currentDevice] systemVersion];
+    BOOL iosVersion10 = FALSE;
+    if ([currSysVer compare:reqSysVer options:NSNumericSearch] != NSOrderedAscending)
+        iosVersion10 = TRUE;
+
+    if (iosVersion10 && !([_Metal_Device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily2_v1]))
+    {
+        DAVA::Logger::Error("A7 ios 10 detected");
+        _Metal_DrawableDispatchSemaphore = new DAVA::Semaphore(_Metal_DrawableDispatchSemaphoreFrameCount);
+    }
+
+    DAVA::uint32 maxTextureSize = 4096u;
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 90000
+    if ([_Metal_Device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily1_v2] || [_Metal_Device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily2_v2])
+        maxTextureSize = DAVA::Max(maxTextureSize, 8192u);
+    if ([_Metal_Device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily3_v1])
+        maxTextureSize = DAVA::Max(maxTextureSize, 16384u);
+#endif
+    
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 100000
+    if ([_Metal_Device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily1_v3] || [_Metal_Device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily2_v3])
+        maxTextureSize = DAVA::Max(maxTextureSize, 8192u);
+    if ([_Metal_Device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily3_v2])
+        maxTextureSize = DAVA::Max(maxTextureSize, 16384u);
+#endif
+
+    MutableDeviceCaps::Get().maxTextureSize = maxTextureSize;
+}
+bool Metal_CheckSurface()
+{
+    return true;
+}
+
+//------------------------------------------------------------------------------
+
+void metal_Initialize(const InitParam& param)
+{
+    _Metal_InitParam = param;
+    DAVA::uint32 ringBufferSize = 2 * 1024 * 1024;
     if (param.shaderConstRingBufferSize)
         ringBufferSize = param.shaderConstRingBufferSize;
-    ConstBufferMetal::InitializeRingBuffer(ringBufferSize);
+    ConstBufferMetal::InitializeRingBuffer(ringBufferSize * METAL_CONSTS_RING_BUFFER_CAPACITY_MULTIPLIER);
 
     stat_DIP = StatSet::AddStat("rhi'dip", "dip");
     stat_DP = StatSet::AddStat("rhi'dp", "dp");
@@ -211,6 +224,7 @@ void metal_Initialize(const InitParam& param)
     VertexBufferMetal::SetupDispatch(&DispatchMetal);
     IndexBufferMetal::SetupDispatch(&DispatchMetal);
     QueryBufferMetal::SetupDispatch(&DispatchMetal);
+    PerfQueryMetal::SetupDispatch(&DispatchMetal);
     TextureMetal::SetupDispatch(&DispatchMetal);
     PipelineStateMetal::SetupDispatch(&DispatchMetal);
     ConstBufferMetal::SetupDispatch(&DispatchMetal);
@@ -219,15 +233,16 @@ void metal_Initialize(const InitParam& param)
     RenderPassMetal::SetupDispatch(&DispatchMetal);
     CommandBufferMetal::SetupDispatch(&DispatchMetal);
 
-    DispatchMetal.impl_Reset = &metal_Reset;
     DispatchMetal.impl_Uninitialize = &metal_Uninitialize;
     DispatchMetal.impl_HostApi = &metal_HostApi;
     DispatchMetal.impl_TextureFormatSupported = &metal_TextureFormatSupported;
     DispatchMetal.impl_NeedRestoreResources = &metal_NeedRestoreResources;
-    DispatchMetal.impl_DeviceCaps = &metal_DeviceCaps;
     DispatchMetal.impl_NeedRestoreResources = &metal_NeedRestoreResources;
-    DispatchMetal.impl_ResumeRendering = &metal_Resume;
-    DispatchMetal.impl_SuspendRendering = &metal_Suspend;
+
+    DispatchMetal.impl_InitContext = &Metal_InitContext;
+    DispatchMetal.impl_ValidateSurface = &Metal_CheckSurface;
+
+    DispatchMetal.impl_SyncCPUGPU = &metal_SynchronizeCPUGPU;
 
     SetDispatchTable(DispatchMetal);
 
@@ -240,12 +255,15 @@ void metal_Initialize(const InitParam& param)
     if (param.maxTextureCount)
         TextureMetal::Init(param.maxTextureCount);
 
-    _metal_DeviceCaps.is32BitIndicesSupported = true;
-    _metal_DeviceCaps.isFramebufferFetchSupported = true;
-    _metal_DeviceCaps.isVertexTextureUnitsSupported = true;
-    _metal_DeviceCaps.isZeroBaseClipRange = true;
-    _metal_DeviceCaps.isUpperLeftRTOrigin = true;
-    _metal_DeviceCaps.isCenterPixelMapping = false;
+    MutableDeviceCaps::Get().is32BitIndicesSupported = true;
+    MutableDeviceCaps::Get().isFramebufferFetchSupported = true;
+    MutableDeviceCaps::Get().isVertexTextureUnitsSupported = true;
+    MutableDeviceCaps::Get().isZeroBaseClipRange = true;
+    MutableDeviceCaps::Get().isUpperLeftRTOrigin = true;
+    MutableDeviceCaps::Get().isCenterPixelMapping = false;
+    MutableDeviceCaps::Get().isInstancingSupported = true;
+    MutableDeviceCaps::Get().maxAnisotropy = 16;
+    MutableDeviceCaps::Get().maxSamples = 4;
 }
 
 } // namespace rhi

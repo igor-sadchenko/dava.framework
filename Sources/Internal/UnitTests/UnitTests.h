@@ -1,33 +1,4 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-#ifndef __DAVAENGINE_UNITTESTS_H__
-#define __DAVAENGINE_UNITTESTS_H__
+#pragma once
 
 #include "UnitTests/TestClassFactory.h"
 #include "UnitTests/TestClass.h"
@@ -59,11 +30,11 @@
             TEST_VERIFY_WITH_MESSAGE(0, "my message");
         }
     };
- 
+
  DAVA_TESTCLASS defines unit test class with name 'my_unittest'. This class has two tests: test1 and test2.
  Tests test1 and test2 will be executed by test framework in order of declaration. Inside tests you can
  verify assertions with TEST_VERIFY or TEST_VERIFY_WITH_MESSAGE. TEST_VERIFY_WITH_MESSAGE allows append user
- message to output when assertion fails. TEST_VERIFY and TEST_VERIFY_WITH_MESSAGE also can be invoked from 
+ message to output when assertion fails. TEST_VERIFY and TEST_VERIFY_WITH_MESSAGE also can be invoked from
  functions that are called from tests.
 
  As DAVA_TESTCLASS declares C++ class you can define you own data and function members.
@@ -109,6 +80,39 @@
 
  ==============================================================================================================
 
+ If you need make some additional initialization for custom BaseTestClass, you can implement metaIndex factory for your test classes and use
+ DAVA_TESTCLASS_CUSTOM_BASE_AND_FACTORY macro to declare it. Custom BaseTestClass should be derived from DAVA::UnitTests::TestClass.
+ Custom factory should be template class and derived from DAVA::UnitTests::TestClassFactoryBase.
+
+ class MyBaseTestClass : public DAVA::UnitTests::TestClass
+ {
+ public:
+ void Init() { do some additional initialization }
+ int CalcSomethingUseful(int param) { return param * 42; }
+ };
+
+ template <typename T>
+ class MyCustomTestClassFactory : public DAVA::UnitTests::TestClassFactoryBase
+ {
+ public:
+     TestClass* CreateTestClass() override
+     {
+        T* testClass = new T();
+        testClass->Init();
+        return testClass;
+     }
+ }
+
+ DAVA_TESTCLASS_CUSTOM_BASE_AND_FACTORY(MyTestClass, MyBaseTestClass, MyCustomTestClassFactory)
+ {
+ DAVA_TEST(Test1)
+ {
+ TEST_VERIFY(CalcSomethingUseful(1) == 42);
+ }
+ };
+
+ ==============================================================================================================
+
  To run unit tests you should do some initialization:
  1. setup callbacks which will be called on test start, error, etc
     Supported callbacks are:
@@ -140,35 +144,46 @@
 
 #define DAVA_TESTCLASS(classname)                                                                                                               \
     struct classname;                                                                                                                           \
-    static struct testclass_ ## classname ## _registrar                                                                                         \
+    static struct testclass_##classname##_registrar                                                                                         \
     {                                                                                                                                           \
-        testclass_ ## classname ## _registrar()                                                                                                 \
+        testclass_##classname##_registrar()                                                                                                 \
         {                                                                                                                                       \
             DAVA::UnitTests::TestCore::Instance()->RegisterTestClass(#classname, new DAVA::UnitTests::TestClassFactoryImpl<classname>);         \
         }                                                                                                                                       \
-    } testclass_ ## classname ## _registrar_instance;                                                                                           \
+    } testclass_##classname##_registrar_instance;                                                                                           \
     struct classname : public DAVA::UnitTests::TestClass, public DAVA::UnitTests::TestClassTypeKeeper<classname>
 
 #define DAVA_TESTCLASS_CUSTOM_BASE(classname, base_classname)                                                                                   \
     struct classname;                                                                                                                           \
-    static struct testclass_ ## classname ## _registrar                                                                                         \
+    static struct testclass_##classname##_registrar                                                                                         \
     {                                                                                                                                           \
-        testclass_ ## classname ## _registrar()                                                                                                 \
+        testclass_##classname##_registrar()                                                                                                 \
         {                                                                                                                                       \
             DAVA::UnitTests::TestCore::Instance()->RegisterTestClass(#classname, new DAVA::UnitTests::TestClassFactoryImpl<classname>);         \
         }                                                                                                                                       \
-    } testclass_ ## classname ## _registrar_instance;                                                                                           \
+    } testclass_##classname##_registrar_instance;                                                                                           \
+    struct classname : public base_classname, public DAVA::UnitTests::TestClassTypeKeeper<classname>
+
+#define DAVA_TESTCLASS_CUSTOM_BASE_AND_FACTORY(classname, base_classname, factory)                                                           \
+    struct classname;                                                                                                                       \
+    static struct testclass_##classname##_registrar                                                                                         \
+    {                                                                                                                                       \
+        testclass_##classname##_registrar()                                                                                                 \
+        {                                                                                                                                   \
+            DAVA::UnitTests::TestCore::Instance()->RegisterTestClass(#classname, new factory<classname>);                                   \
+        }                                                                                                                                   \
+    } testclass_##classname##_registrar_instance;                                                                                           \
     struct classname : public base_classname, public DAVA::UnitTests::TestClassTypeKeeper<classname>
 
 #define DAVA_TEST(testname)                                                                                             \
-    struct test_ ## testname ## _registrar {                                                                            \
-        test_ ## testname ## _registrar(DAVA::UnitTests::TestClass* testClass)                                          \
+    struct test_##testname##_registrar {                                                                            \
+        test_##testname##_registrar(DAVA::UnitTests::TestClass* testClass)                                          \
         {                                                                                                               \
-            testClass->RegisterTest(#testname, &test_ ## testname ## _call);                                            \
+            testClass->RegisterTest(#testname, &test_##testname##_call);                                            \
         }                                                                                                               \
     };                                                                                                                  \
-    test_ ## testname ## _registrar test_ ## testname ## _registrar_instance = test_ ## testname ## _registrar(this);   \
-    static void test_ ## testname ## _call(DAVA::UnitTests::TestClass* testClass)                                       \
+    test_##testname##_registrar test_##testname##_registrar_instance = test_##testname##_registrar(this);   \
+    static void test_##testname##_call(DAVA::UnitTests::TestClass* testClass)                                       \
     {                                                                                                                   \
         static_cast<TestClassType*>(testClass)->testname();                                                             \
     }                                                                                                                   \
@@ -180,55 +195,83 @@
         DAVA::UnitTests::TestCore::Instance()->TestFailed(DAVA::String(#condition), __FILE__, __LINE__, DAVA::String(message)); \
     }
 
-#define TEST_VERIFY(condition)  TEST_VERIFY_WITH_MESSAGE(condition, DAVA::String())
+#define TEST_VERIFY(condition) TEST_VERIFY_WITH_MESSAGE(condition, DAVA::String())
 
 //////////////////////////////////////////////////////////////////////////
-// Macros that declare classes that are covered by unit test
+// Macros that declare source files that are covered by unit test
 //
 // Usage:
 //  DAVA_TESTCLASS(UsefulTest)
 //  {
-//      BEGIN_CLASSES_COVERED_BY_TESTS()
-//          DECLARE_COVERED_CLASS(FileSystem)
-//          DECLARE_COVERED_CLASS(JobManager)
-//      END_CLASSES_COVERED_BY_TESTS()
+//      BEGIN_FILES_COVERED_BY_TESTS()
+//          DECLARE_COVERED_FILES("FileSystem.cpp")
+//          DECLARE_COVERED_FILES("JobManager.cpp")
+//      FIND_FILES_IN_TARGET( DavaTools )
+//          DECLARE_COVERED_FILES("FramePathHelper.cpp")
+//      END_FILES_COVERED_BY_TESTS()
 //
 //      DAVA_TEST(test1) {}
 //  };
 //
-// Test class UsefulTest covers two classes: FileSystem and JobManager
+// Test class UsefulTest covers two file: "FileSystem.cpp" and "JobManager.cpp"
 //
-// or to automatically deduce covered class from test class name
+// FIND_FILES_IN_TARGET( TARGET_NAME )
+// Explicitly tells that next files belong to specified target. It is used to distinguish
+// files with the same names located in different targets
+//
+// or to automatically deduce covered file from test class name
 //  DAVA_TESTCLASS(DateTimeTest)
 //  {
-//      DEDUCE_COVERED_CLASS_FROM_TESTCLASS()
+//      DEDUCE_COVERED_FILES_FROM_TESTCLASS()
 //  };
 //
-// DEDUCE_COVERED_CLASS_FROM_TESTCLASS discards Test postfix of any and considers that
+// DEDUCE_COVERED_FILES_FROM_TESTCLASS discards Test postfix of any and considers that
 // DateTimeTest covers class DateTime.
-// 
+//
+//
 // This is test author's responsibility to specify valid and corresponding classes
 //
 // You can get and process classes covered by tests through call to DAVA::UnitTests::TestCore::Instance()->GetTestCoverage()
-// which returns Map<String, Vector<String>> where key is test class name and value is vector of covered classes 
+// which returns Map<String, Vector<String>> where key is test class name and value is vector of covered files
+//
+//Macros DAVA_FOLDERS, TARGET_FOLDERS are installed by cmake through add_definitions(...)
+//DAVA_FOLDERS general list of folders where the sources are
+//TARGET_FOLDERS list of folders with source code for the current target has
 //
 
-#define BEGIN_CLASSES_COVERED_BY_TESTS() \
-    DAVA::Vector<DAVA::String> ClassesCoveredByTests() const override { \
-        DAVA::Vector<DAVA::String> result;
+#if defined(TEST_COVERAGE)
 
-#define DECLARE_COVERED_CLASS(classname) \
-        result.emplace_back(PrettifyTypeName(DAVA::String(typeid(classname).name())));
+#define BEGIN_FILES_COVERED_BY_TESTS() \
+    DAVA::UnitTests::TestCoverageInfo FilesCoveredByTests() const override { \
+        DAVA::UnitTests::TestCoverageInfo testInfo;  \
+        testInfo.targetFolders.emplace("all", DAVA::String(DAVA_FOLDERS)); \
+        const char* targetFolders = nullptr;
 
-#define END_CLASSES_COVERED_BY_TESTS() \
-        return result; \
+#define FIND_FILES_IN_TARGET(targetname) \
+        targetFolders = TARGET_FOLDERS_##targetname;
+
+#define DECLARE_COVERED_FILES(classname) \
+        testInfo.testFiles.emplace_back(classname); \
+        if (targetFolders != nullptr)\
+        { \
+            testInfo.targetFolders.emplace(DAVA::String(classname), DAVA::String(targetFolders));\
+        }
+
+#define END_FILES_COVERED_BY_TESTS() \
+        return testInfo; \
     }
 
-#define DEDUCE_COVERED_CLASS_FROM_TESTCLASS() \
-    DAVA::Vector<DAVA::String> ClassesCoveredByTests() const override { \
-        DAVA::Vector<DAVA::String> result; \
-        result.emplace_back(RemoveTestPostfix(PrettifyTypeName(DAVA::String(typeid(*this).name())))); \
-        return result; \
-    }
+#define DEDUCE_COVERED_FILES_FROM_TESTCLASS() \
+        BEGIN_FILES_COVERED_BY_TESTS() \
+            DECLARE_COVERED_FILES(PrettifyTypeName(DAVA::String(typeid(*this).name())) + DAVA::String(".cpp")) \
+        END_FILES_COVERED_BY_TESTS()
 
-#endif  // __DAVAENGINE_UNITTESTS_H__
+#else
+
+#define BEGIN_FILES_COVERED_BY_TESTS()
+#define FIND_FILES_IN_TARGET(targetname)
+#define DECLARE_COVERED_FILES(classname)
+#define END_FILES_COVERED_BY_TESTS()
+#define DEDUCE_COVERED_FILES_FROM_TESTCLASS()
+
+#endif

@@ -1,59 +1,25 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __RHI_PUBLIC_H__
 #define __RHI_PUBLIC_H__
 
-    #include "rhi_Type.h"
-
-namespace DAVA
-{
-class Mutex;
-}
+#include "rhi_Type.h"
 
 namespace rhi
 {
 ////////////////////////////////////////////////////////////////////////////////
 // base operation
 
-struct
-InitParam
+struct InitParam
 {
     uint32 width;
     uint32 height;
     float32 scaleX;
     float32 scaleY;
     void* window;
+    void* defaultFrameBuffer;
     uint32 fullScreen : 1;
     uint32 threadedRenderEnabled : 1;
+    uint32 vsyncEnabled : 1;
     uint32 threadedRenderFrameCount;
-    DAVA::Mutex* FrameCommandExecutionSync;
 
     uint32 maxIndexBufferCount;
     uint32 maxVertexBufferCount;
@@ -70,19 +36,23 @@ InitParam
 
     uint32 shaderConstRingBufferSize;
 
-    void (*acquireContextFunc)();
-    void (*releaseContextFunc)();
+    void (*acquireContextFunc)() = nullptr;
+    void (*releaseContextFunc)() = nullptr;
+
+    void* renderingErrorCallbackContext = nullptr;
+    void (*renderingErrorCallback)(RenderingError, void*) = nullptr;
 
     InitParam()
         : width(0)
         , height(0)
-        , scaleX(1.0f)
-        , scaleY(1.0f)
+        , scaleX(1.f)
+        , scaleY(1.f)
         , window(nullptr)
+        , defaultFrameBuffer(nullptr)
         , fullScreen(false)
         , threadedRenderEnabled(false)
+        , vsyncEnabled(true)
         , threadedRenderFrameCount(2)
-        , FrameCommandExecutionSync(nullptr)
         , maxIndexBufferCount(0)
         , maxVertexBufferCount(0)
         , maxConstBufferCount(0)
@@ -95,14 +65,11 @@ InitParam
         , maxCommandBuffer(0)
         , maxPacketListCount(0)
         , shaderConstRingBufferSize(0)
-        , acquireContextFunc(nullptr)
-        , releaseContextFunc(nullptr)
     {
     }
 };
 
-struct
-ResetParam
+struct ResetParam
 {
     uint32 width;
     uint32 height;
@@ -110,30 +77,63 @@ ResetParam
     float32 scaleY;
     void* window;
     uint32 fullScreen : 1;
+    uint32 vsyncEnabled : 1;
 
     ResetParam()
         : width(0)
         , height(0)
-        , scaleX(1.0f)
-        , scaleY(1.0f)
-        , fullScreen(false)
+        , scaleX(1.f)
+        , scaleY(1.f)
         , window(nullptr)
+        , fullScreen(false)
+        , vsyncEnabled(true)
     {
     }
 };
 
-struct
-RenderDeviceCaps
+struct RenderDeviceCaps
 {
+    uint32 maxAnisotropy = 1;
+    uint32 maxSamples = 1;
+    uint32 maxTextureSize = 2048;
+    char deviceDescription[128];
+
     bool is32BitIndicesSupported = false;
     bool isVertexTextureUnitsSupported = false;
     bool isFramebufferFetchSupported = false;
-
     bool isUpperLeftRTOrigin = false;
     bool isZeroBaseClipRange = false;
     bool isCenterPixelMapping = false;
+    bool isInstancingSupported = false;
+    bool isPerfQuerySupported = false;
+
+    RenderDeviceCaps()
+    {
+        memset(deviceDescription, 0, sizeof(deviceDescription));
+    }
+
+    bool isAnisotropicFilteringSupported() const
+    {
+        return maxAnisotropy > 1;
+    }
+
+    bool SupportsAntialiasingType(AntialiasingType type) const
+    {
+        switch (type)
+        {
+        case AntialiasingType::MSAA_2X:
+            return (maxSamples >= 2);
+
+        case AntialiasingType::MSAA_4X:
+            return (maxSamples >= 4);
+
+        default:
+            return true;
+        }
+    }
 };
 
+bool ApiIsSupported(Api api);
 void Initialize(Api api, const InitParam& param);
 void Uninitialize();
 void Reset(const ResetParam& param);
@@ -142,20 +142,22 @@ bool NeedRestoreResources();
 void Present(); // execute all submitted command-buffers & do flip/present
 
 Api HostApi();
-bool TextureFormatSupported(TextureFormat format);
+bool TextureFormatSupported(TextureFormat format, ProgType progType = PROG_FRAGMENT);
 const RenderDeviceCaps& DeviceCaps();
 
 void SuspendRendering();
 void ResumeRendering();
 
+//notify rendering backend that some explicit code can do some rendering not using rhi and thus leave rendering api in different state
+//eg: QT in RE/QuickEd do some opengl calls itself, thus values cached in rhi backend not correspond with actual state of opengl and should be invalidated
 void InvalidateCache();
+void SynchronizeCPUGPU(uint64* cpuTimestamp, uint64* gpuTimestamp);
 
 ////////////////////////////////////////////////////////////////////////////////
 // resource-handle
 
 template <ResourceType T>
-class
-ResourceHandle
+class ResourceHandle
 {
 public:
     ResourceHandle()
@@ -174,11 +176,6 @@ public:
     {
         return handle;
     }
-    ResourceHandle<T>& operator=(const ResourceHandle<T>& src)
-    {
-        handle = src.handle;
-        return *this;
-    }
 
 private:
     Handle handle;
@@ -190,7 +187,7 @@ private:
 typedef ResourceHandle<RESOURCE_VERTEX_BUFFER> HVertexBuffer;
 
 HVertexBuffer CreateVertexBuffer(const VertexBuffer::Descriptor& desc);
-void DeleteVertexBuffer(HVertexBuffer vb, bool forceImmediate = false);
+void DeleteVertexBuffer(HVertexBuffer vb, bool scheduleDeletion = true);
 
 void* MapVertexBuffer(HVertexBuffer vb, uint32 offset, uint32 size);
 void UnmapVertexBuffer(HVertexBuffer vb);
@@ -205,7 +202,7 @@ bool NeedRestoreVertexBuffer(HVertexBuffer vb);
 typedef ResourceHandle<RESOURCE_INDEX_BUFFER> HIndexBuffer;
 
 HIndexBuffer CreateIndexBuffer(const IndexBuffer::Descriptor& desc);
-void DeleteIndexBuffer(HIndexBuffer ib, bool forceImmediate = false);
+void DeleteIndexBuffer(HIndexBuffer ib, bool scheduleDeletion = true);
 
 void* MapIndexBuffer(HIndexBuffer ib, uint32 offset, uint32 size);
 void UnmapIndexBuffer(HIndexBuffer ib);
@@ -219,12 +216,27 @@ bool NeedRestoreIndexBuffer(HIndexBuffer vb);
 
 typedef ResourceHandle<RESOURCE_QUERY_BUFFER> HQueryBuffer;
 
-HQueryBuffer CreateQueryBuffer(unsigned maxObjectCount);
+HQueryBuffer CreateQueryBuffer(uint32 maxObjectCount);
 void ResetQueryBuffer(HQueryBuffer buf);
-void DeleteQueryBuffer(HQueryBuffer buf, bool forceImmediate = false);
+void DeleteQueryBuffer(HQueryBuffer buf, bool scheduleDeletion = true);
 
+bool QueryBufferIsReady(HQueryBuffer buf);
 bool QueryIsReady(HQueryBuffer buf, uint32 objectIndex);
 int QueryValue(HQueryBuffer buf, uint32 objectIndex);
+
+////////////////////////////////////////////////////////////////////////////////
+// perf-query
+
+typedef ResourceHandle<RESOURCE_PERFQUERY> HPerfQuery;
+
+HPerfQuery CreatePerfQuery();
+void DeletePerfQuery(HPerfQuery handle, bool scheduleDeletion = true);
+void ResetPerfQuery(HPerfQuery handle);
+
+bool PerfQueryIsReady(HPerfQuery);
+uint64 PerfQueryTimeStamp(HPerfQuery);
+
+void SetFramePerfQueries(HPerfQuery startQuery, HPerfQuery endQuery);
 
 ////////////////////////////////////////////////////////////////////////////////
 // render-pipeline state & const-buffers
@@ -233,17 +245,17 @@ typedef ResourceHandle<RESOURCE_PIPELINE_STATE> HPipelineState;
 typedef ResourceHandle<RESOURCE_CONST_BUFFER> HConstBuffer;
 
 HPipelineState AcquireRenderPipelineState(const PipelineState::Descriptor& desc);
-void ReleaseRenderPipelineState(HPipelineState rps, bool forceImmediate = false);
+void ReleaseRenderPipelineState(HPipelineState rps, bool scheduleDeletion = true);
 
 HConstBuffer CreateVertexConstBuffer(HPipelineState rps, uint32 bufIndex);
-bool CreateVertexConstBuffers(HPipelineState rps, uint32 maxCount, HConstBuffer* constBuf);
+void CreateVertexConstBuffers(HPipelineState rps, uint32 maxCount, HConstBuffer* constBuf);
 
 HConstBuffer CreateFragmentConstBuffer(HPipelineState rps, uint32 bufIndex);
-bool CreateFragmentConstBuffers(HPipelineState rps, uint32 maxCount, HConstBuffer* constBuf);
+void CreateFragmentConstBuffers(HPipelineState rps, uint32 maxCount, HConstBuffer* constBuf);
 
 bool UpdateConstBuffer4fv(HConstBuffer constBuf, uint32 constIndex, const float* data, uint32 constCount);
 bool UpdateConstBuffer1fv(HConstBuffer constBuf, uint32 constIndex, uint32 constSubIndex, const float* data, uint32 dataCount);
-void DeleteConstBuffer(HConstBuffer constBuf, bool forceImmediate = false);
+void DeleteConstBuffer(HConstBuffer constBuf, bool scheduleDeletion = true);
 
 ////////////////////////////////////////////////////////////////////////////////
 // texture-set
@@ -252,7 +264,7 @@ typedef ResourceHandle<RESOURCE_TEXTURE> HTexture;
 typedef ResourceHandle<RESOURCE_TEXTURE_SET> HTextureSet;
 
 HTexture CreateTexture(const Texture::Descriptor& desc);
-void DeleteTexture(HTexture tex, bool forceImmediate = false);
+void DeleteTexture(HTexture tex, bool scheduleDeletion = true);
 
 void* MapTexture(HTexture tex, uint32 level = 0);
 void UnmapTexture(HTexture tex);
@@ -261,24 +273,17 @@ void UpdateTexture(HTexture tex, const void* data, uint32 level, TextureFace fac
 
 bool NeedRestoreTexture(HTexture tex);
 
-struct
-TextureSetDescriptor
+struct TextureSetDescriptor
 {
-    uint32 fragmentTextureCount;
+    uint32 fragmentTextureCount = 0;
+    uint32 vertexTextureCount = 0;
     HTexture fragmentTexture[MAX_FRAGMENT_TEXTURE_SAMPLER_COUNT];
-    uint32 vertexTextureCount;
     HTexture vertexTexture[MAX_VERTEX_TEXTURE_SAMPLER_COUNT];
-
-    TextureSetDescriptor()
-        : fragmentTextureCount(0)
-        , vertexTextureCount(0)
-    {
-    }
 };
 
 HTextureSet AcquireTextureSet(const TextureSetDescriptor& desc);
 HTextureSet CopyTextureSet(HTextureSet ts);
-void ReleaseTextureSet(HTextureSet ts, bool forceImmediate = false);
+void ReleaseTextureSet(HTextureSet ts, bool scheduleDeletion = true);
 void ReplaceTextureInAllTextureSets(HTexture oldHandle, HTexture newHandle);
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -288,7 +293,7 @@ typedef ResourceHandle<RESOURCE_DEPTHSTENCIL_STATE> HDepthStencilState;
 
 HDepthStencilState AcquireDepthStencilState(const DepthStencilState::Descriptor& desc);
 HDepthStencilState CopyDepthStencilState(HDepthStencilState ds);
-void ReleaseDepthStencilState(HDepthStencilState ds, bool forceImmediate = false);
+void ReleaseDepthStencilState(HDepthStencilState ds, bool scheduleDeletion = true);
 
 ////////////////////////////////////////////////////////////////////////////////
 //  sampler-state
@@ -297,7 +302,7 @@ typedef ResourceHandle<RESOURCE_SAMPLER_STATE> HSamplerState;
 
 HSamplerState AcquireSamplerState(const SamplerState::Descriptor& desc);
 HSamplerState CopySamplerState(HSamplerState ss);
-void ReleaseSamplerState(HSamplerState ss, bool forceImmediate = false);
+void ReleaseSamplerState(HSamplerState ss, bool scheduleDeletion = true);
 
 ////////////////////////////////////////////////////////////////////////////////
 // sync-object
@@ -319,12 +324,12 @@ typedef ResourceHandle<RESOURCE_PACKET_LIST> HPacketList;
 HRenderPass AllocateRenderPass(const RenderPassConfig& passDesc, uint32 packetListCount, HPacketList* packetList);
 void BeginRenderPass(HRenderPass pass);
 void EndRenderPass(HRenderPass pass); // no explicit render-pass 'release' needed
+bool NeedInvertProjection(const RenderPassConfig& passDesc);
 
 ////////////////////////////////////////////////////////////////////////////////
 // rendering
 
-struct
-Packet
+struct Packet
 {
     enum
     {
@@ -351,8 +356,13 @@ Packet
     HTextureSet textureSet;
     PrimitiveType primitiveType;
     uint32 primitiveCount;
+    uint32 instanceCount;
+    uint32 baseInstance;
     uint32 queryIndex;
+    HPerfQuery perfQueryStart;
+    HPerfQuery perfQueryEnd;
     uint32 options;
+    uint32 userFlags; //ignored by RHI
     const char* debugMarker;
 
     Packet()
@@ -366,9 +376,13 @@ Packet
         , cullMode(CULL_CCW)
         , vertexConstCount(0)
         , fragmentConstCount(0)
+        , primitiveType(PRIMITIVE_TRIANGLELIST)
         , primitiveCount(0)
+        , instanceCount(0)
+        , baseInstance(0)
         , queryIndex(DAVA::InvalidIndex)
         , options(0)
+        , userFlags(0)
         , debugMarker(nullptr)
     {
     }
@@ -378,6 +392,9 @@ void BeginPacketList(HPacketList packetList);
 void AddPackets(HPacketList packetList, const Packet* packet, uint32 packetCount);
 void AddPacket(HPacketList packetList, const Packet& packet);
 void EndPacketList(HPacketList packetList, HSyncObject syncObject = HSyncObject(InvalidHandle)); // 'packetList' handle invalid after this, no explicit "release" needed
+
+uint32 NativeColorRGBA(float r, float g, float b, float a = 1.0f);
+uint32 NativeColorRGBA(uint32 color); //0xAABBGGRR to api-native;
 
 } // namespace rhi
 

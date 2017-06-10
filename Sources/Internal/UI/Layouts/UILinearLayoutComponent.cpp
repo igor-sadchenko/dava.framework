@@ -1,54 +1,43 @@
-/*==================================================================================
- Copyright (c) 2008, binaryzebra
- All rights reserved.
- 
- Redistribution and use in source and binary forms, with or without
- modification, are permitted provided that the following conditions are met:
- 
- * Redistributions of source code must retain the above copyright
- notice, this list of conditions and the following disclaimer.
- * Redistributions in binary form must reproduce the above copyright
- notice, this list of conditions and the following disclaimer in the
- documentation and/or other materials provided with the distribution.
- * Neither the name of the binaryzebra nor the
- names of its contributors may be used to endorse or promote products
- derived from this software without specific prior written permission.
- 
- THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
- ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
- DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- =====================================================================================*/
-
 #include "UILinearLayoutComponent.h"
 
 #include "UI/UIControl.h"
 
 namespace DAVA
 {
+DAVA_VIRTUAL_REFLECTION_IMPL(UILinearLayoutComponent)
+{
+    ReflectionRegistrator<UILinearLayoutComponent>::Begin()
+    .ConstructorByPointer()
+    .DestructorByPointer([](UILinearLayoutComponent* o) { o->Release(); })
+    .Field("enabled", &UILinearLayoutComponent::IsEnabled, &UILinearLayoutComponent::SetEnabled)
+    .Field("orientation", &UILinearLayoutComponent::GetOrientation, &UILinearLayoutComponent::SetOrientation)
+    [
+    M::EnumT<eOrientation>()
+    ]
+    .Field("padding", &UILinearLayoutComponent::GetPadding, &UILinearLayoutComponent::SetPadding)
+    .Field("dynamicPadding", &UILinearLayoutComponent::IsDynamicPadding, &UILinearLayoutComponent::SetDynamicPadding)
+    .Field("spacing", &UILinearLayoutComponent::GetSpacing, &UILinearLayoutComponent::SetSpacing)
+    .Field("dynamicSpacing", &UILinearLayoutComponent::IsDynamicSpacing, &UILinearLayoutComponent::SetDynamicSpacing)
+    .Field("skipInvisible", &UILinearLayoutComponent::IsSkipInvisibleControls, &UILinearLayoutComponent::SetSkipInvisibleControls)
+    .Field("useRtl", &UILinearLayoutComponent::IsUseRtl, &UILinearLayoutComponent::SetUseRtl)
+    .End();
+}
+
 UILinearLayoutComponent::UILinearLayoutComponent()
 {
     SetEnabled(true);
     SetSkipInvisibleControls(true);
 }
 
-UILinearLayoutComponent::UILinearLayoutComponent(const UILinearLayoutComponent &src)
+UILinearLayoutComponent::UILinearLayoutComponent(const UILinearLayoutComponent& src)
     : flags(src.flags)
     , padding(src.padding)
     , spacing(src.spacing)
 {
-    
 }
 
 UILinearLayoutComponent::~UILinearLayoutComponent()
 {
-    
 }
 
 UILinearLayoutComponent* UILinearLayoutComponent::Clone() const
@@ -63,24 +52,57 @@ bool UILinearLayoutComponent::IsEnabled() const
 
 void UILinearLayoutComponent::SetEnabled(bool enabled)
 {
-    flags.set(FLAG_ENABLED, enabled);
-    SetLayoutDirty();
+    SetFlag(FLAG_ENABLED, enabled);
 }
 
 UILinearLayoutComponent::eOrientation UILinearLayoutComponent::GetOrientation() const
 {
-    return flags.test(FLAG_ORIENTATION_VERTICAL) ? VERTICAL : HORIZONTAL;
+    if (flags.test(FLAG_ORIENTATION_VERTICAL))
+    {
+        return flags.test(FLAG_ORIENTATION_INVERSE) ? BOTTOM_UP : TOP_DOWN;
+    }
+    else
+    {
+        return flags.test(FLAG_ORIENTATION_INVERSE) ? RIGHT_TO_LEFT : LEFT_TO_RIGHT;
+    }
 }
 
-void UILinearLayoutComponent::SetOrientation(eOrientation newOrientation)
+void UILinearLayoutComponent::SetOrientation(eOrientation direction)
 {
-    flags.set(FLAG_ORIENTATION_VERTICAL, newOrientation == VERTICAL);
-    SetLayoutDirty();
+    bool vertical = false;
+    bool inverse = false;
+    switch (direction)
+    {
+    case LEFT_TO_RIGHT:
+        vertical = false;
+        inverse = false;
+        break;
+    case RIGHT_TO_LEFT:
+        vertical = false;
+        inverse = true;
+        break;
+    case TOP_DOWN:
+        vertical = true;
+        inverse = false;
+        break;
+    case BOTTOM_UP:
+        vertical = true;
+        inverse = true;
+        break;
+    }
+
+    SetFlag(FLAG_ORIENTATION_VERTICAL, vertical);
+    SetFlag(FLAG_ORIENTATION_INVERSE, inverse);
 }
 
 Vector2::eAxis UILinearLayoutComponent::GetAxis() const
 {
     return flags.test(FLAG_ORIENTATION_VERTICAL) ? Vector2::AXIS_Y : Vector2::AXIS_X;
+}
+
+bool UILinearLayoutComponent::IsInverse() const
+{
+    return flags.test(FLAG_ORIENTATION_INVERSE);
 }
 
 float32 UILinearLayoutComponent::GetPadding() const
@@ -90,6 +112,11 @@ float32 UILinearLayoutComponent::GetPadding() const
 
 void UILinearLayoutComponent::SetPadding(float32 newPadding)
 {
+    if (padding == newPadding)
+    {
+        return;
+    }
+
     padding = newPadding;
     SetLayoutDirty();
 }
@@ -101,6 +128,11 @@ float32 UILinearLayoutComponent::GetSpacing() const
 
 void UILinearLayoutComponent::SetSpacing(float32 newSpacing)
 {
+    if (spacing == newSpacing)
+    {
+        return;
+    }
+
     spacing = newSpacing;
     SetLayoutDirty();
 }
@@ -112,8 +144,7 @@ bool UILinearLayoutComponent::IsDynamicPadding() const
 
 void UILinearLayoutComponent::SetDynamicPadding(bool dynamic)
 {
-    flags.set(FLAG_DYNAMIC_PADDING, dynamic);
-    SetLayoutDirty();
+    SetFlag(FLAG_DYNAMIC_PADDING, dynamic);
 }
 
 bool UILinearLayoutComponent::IsDynamicSpacing() const
@@ -123,8 +154,7 @@ bool UILinearLayoutComponent::IsDynamicSpacing() const
 
 void UILinearLayoutComponent::SetDynamicSpacing(bool dynamic)
 {
-    flags.set(FLAG_DYNAMIC_SPACING, dynamic);
-    SetLayoutDirty();
+    SetFlag(FLAG_DYNAMIC_SPACING, dynamic);
 }
 
 bool UILinearLayoutComponent::IsSkipInvisibleControls() const
@@ -134,8 +164,7 @@ bool UILinearLayoutComponent::IsSkipInvisibleControls() const
 
 void UILinearLayoutComponent::SetSkipInvisibleControls(bool skip)
 {
-    flags.set(FLAG_SKIP_INVISIBLE_CONTROLS, skip);
-    SetLayoutDirty();
+    SetFlag(FLAG_SKIP_INVISIBLE_CONTROLS, skip);
 }
 
 bool UILinearLayoutComponent::IsUseRtl() const
@@ -145,8 +174,7 @@ bool UILinearLayoutComponent::IsUseRtl() const
 
 void UILinearLayoutComponent::SetUseRtl(bool use)
 {
-    flags.set(FLAG_RTL, use);
-    SetLayoutDirty();
+    SetFlag(FLAG_RTL, use);
 }
 
 int32 UILinearLayoutComponent::GetOrientationAsInt() const
@@ -167,4 +195,12 @@ void UILinearLayoutComponent::SetLayoutDirty()
     }
 }
 
+void UILinearLayoutComponent::SetFlag(eFlags flag, bool enabled)
+{
+    if (flags.test(flag) != enabled)
+    {
+        flags.set(flag, enabled);
+        SetLayoutDirty();
+    }
+}
 }

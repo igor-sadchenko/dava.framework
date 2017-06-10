@@ -1,37 +1,8 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __RHI_GLES2_H__
 #define __RHI_GLES2_H__
 
 #include "../Common/rhi_Private.h"
-#include "../Common/rhi_Impl.h"
+#include "../Common/rhi_BackendImpl.h"
 
 namespace rhi
 {
@@ -62,8 +33,22 @@ namespace QueryBufferGLES2
 {
 void SetupDispatch(Dispatch* dispatch);
 
-void BeginQuery(Handle buf, uint32 objectIndex);
-void EndQuery(Handle buf, uint32 objectIndex);
+void SetQueryIndex(Handle buf, uint32 objectIndex);
+void QueryComplete(Handle buf);
+bool QueryIsCompleted(Handle buf);
+
+void ReleaseQueryObjectsPool();
+}
+namespace PerfQueryGLES2
+{
+void SetupDispatch(Dispatch* dispatch);
+
+void ObtainPerfQueryResults();
+
+void IssueQuery(Handle handle);
+void SkipQuery(Handle handle);
+
+void ReleaseQueryObjectsPool();
 }
 
 namespace TextureGLES2
@@ -71,10 +56,12 @@ namespace TextureGLES2
 void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
 void SetToRHI(Handle tex, unsigned unit_i, uint32 base_i = DAVA::InvalidIndex);
-void SetAsRenderTarget(Handle tex, Handle depth, TextureFace face, unsigned level);
+unsigned GetFrameBuffer(const Handle* color, const TextureFace* face, const unsigned* level, uint32 colorCount, Handle depth);
+void ResolveMultisampling(Handle from, Handle to);
 Size2i Size(Handle tex);
 void ReCreateAll();
 unsigned NeedRestoreCount();
+void InvalidateCache();
 }
 
 namespace SamplerStateGLES2
@@ -88,8 +75,8 @@ namespace PipelineStateGLES2
 {
 void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
-void SetToRHI(Handle ps, uint32 vdeclUID);
-void SetVertexDeclToRHI(Handle ps, uint32 vdeclUID, uint32 firstVertex = 0);
+void SetToRHI(Handle ps);
+void SetVertexDeclToRHI(Handle ps, uint32 vdeclUID, uint32 firstVertex, uint32 vertexStreamCount, const Handle* vb);
 uint32 VertexSamplerCount(Handle ps);
 uint32 ProgramUid(Handle ps);
 void InvalidateCache();
@@ -101,6 +88,7 @@ namespace DepthStencilStateGLES2
 void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
 void SetToRHI(Handle hstate);
+void InvalidateCache();
 }
 namespace ConstBufferGLES2
 {
@@ -124,14 +112,7 @@ void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
 }
 
-void InitializeRenderThreadGLES2(uint32 frameCount);
-void UninitializeRenderThreadGLES2();
-
-void SuspendGLES2();
-void ResumeGLES2();
-
-struct
-GLCommand
+struct GLCommand
 {
     enum Func
     {
@@ -166,6 +147,7 @@ GLCommand
         TEX_IMAGE2D,
         GENERATE_MIPMAP,
         READ_PIXELS,
+        PIXEL_STORE_I,
 
         CREATE_PROGRAM,
         CREATE_SHADER,
@@ -173,6 +155,7 @@ GLCommand
         COMPILE_SHADER,
         ATTACH_SHADER,
         LINK_PROGRAM,
+        DETACH_SHADER,
         GET_SHADER_IV,
         GET_SHADER_INFO_LOG,
         GET_PROGRAM_IV,
@@ -180,7 +163,14 @@ GLCommand
         GET_ACTIVE_UNIFORM,
         GET_UNIFORM_LOCATION,
 
-        SET_UNIFORM_1I
+        SET_UNIFORM_1I,
+
+        GET_QUERYOBJECT_UIV,
+        DELETE_QUERIES,
+
+        GET_QUERY_RESULT_NO_WAIT,
+
+        SYNC_CPU_GPU
     };
 
     Func func;
@@ -189,7 +179,7 @@ GLCommand
     int status;
 };
 
-void ExecGL(GLCommand* cmd, uint32 cmdCount, bool force_immediate = false);
+void ExecGL(GLCommand* cmd, uint32 cmdCount, bool forceExecute = false);
 
 //==============================================================================
 }

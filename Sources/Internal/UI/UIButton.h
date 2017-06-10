@@ -1,32 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __DAVAENGINE_UI_BUTTON_H__
 #define __DAVAENGINE_UI_BUTTON_H__
 
@@ -36,7 +7,7 @@
 
 namespace DAVA
 {
-    /**
+/**
      \ingroup controlsystem
      \brief Button.
         Use for different graphical representation of the control state.
@@ -51,6 +22,7 @@ class Font;
 
 class UIButton : public UIControl
 {
+    DAVA_VIRTUAL_REFLECTION(UIButton, UIControl);
 
 public:
     /**
@@ -62,9 +34,9 @@ public:
      */
     UIButton(const Rect& rect = Rect());
 
-    virtual void SetRect(const Rect &rect);
+    void SetRect(const Rect& rect) override;
 
-    virtual void SetSize(const Vector2 &newSize);
+    void SetSize(const Vector2& newSize) override;
 
     /**
      \brief Returns Sprite used for draw requested state in the UIControlBackground object.
@@ -97,7 +69,7 @@ public:
      \param[in] spriteName Sprite path-name.
      \param[in] spriteFrame Sprite frame you want to use for draw.
      */
-    virtual void SetStateSprite(int32 state, const FilePath &spriteName, int32 spriteFrame = 0);
+    virtual void SetStateSprite(int32 state, const FilePath& spriteName, int32 spriteFrame = 0);
     /**
      \brief Sets Sprite for the control UIControlBackground object for the requested state.
         Method creates UIControlBackground object for the state if this is neccesary.
@@ -105,7 +77,7 @@ public:
      \param[in] newSprite Pointer for a Sprite.
      \param[in] spriteFrame Sprite frame you want to use for draw.
      */
-    virtual void SetStateSprite(int32 state, Sprite *newSprite, int32 spriteFrame = 0);
+    virtual void SetStateSprite(int32 state, Sprite* newSprite, int32 spriteFrame = 0);
     /**
      \brief Sets Sprite frame you want to use for draw for the control UIControlBackground object for the requested state.
         Method creates UIControlBackground object for the state if this is neccesary.
@@ -160,29 +132,20 @@ public:
      \param[in] state state to get value for.
      \returns background used for state draw.
      */
-    virtual UIControlBackground *GetStateBackground(int32 state);
+    virtual UIControlBackground* GetStateBackground(int32 state);
     /**
      \brief Sets background what will be used for draw of the requested states.
         Background is cloned inside button.
      \param[in] state state bit mask to set value for.
      \param[in] newBackground control background you want to use for draw of the states.
      */
-    virtual void SetStateBackground(int32 state, UIControlBackground *newBackground);
+    virtual void SetStateBackground(int32 state, UIControlBackground* newBackground);
     /**
      \brief Sets the fitting option for the text background of the requested states.
      \param[in] state state bit mask to set value for.
      \param[in] Fitting option.
      */
     virtual void SetStateFittingOption(int32 state, int32 fittingOption);
-    /**
-     \brief This method is invalid for the UIButton. Don't try to call this method.
-     */
-    virtual void SetBackground(UIControlBackground *newBg);
-    /**
-     \brief Returns UIControlBackground object actual for the current button state.
-     \returns background used currently for draw.
-     */
-    virtual UIControlBackground * GetBackground() const;
 
     /**
      \brief Sets background what will be used for draw of the requested states.
@@ -190,7 +153,7 @@ public:
      \param[in] state state bit mask to set value for.
      \param[in] font font used for text draw of the states.
      */
-    virtual void SetStateFont(int32 state, Font *font);
+    virtual void SetStateFont(int32 state, Font* font);
 
     /**
      \brief Sets the color of the font for particular state.
@@ -232,7 +195,7 @@ public:
      \param[in] state state to get value for.
      \returns UIStaticText used for a state.
      */
-    virtual UIStaticText * GetStateTextControl(int32 state);
+    virtual UIStaticText* GetStateTextControl(int32 state);
 
     /**
      \brief Sets text what will be shown for the requested states.
@@ -241,14 +204,14 @@ public:
      \param[in] text text you want to be shown for the text of the states.
      \param[in] requestedTextRectSize rect size to fit text in.
      */
-    virtual void SetStateText(int32 state, const WideString &text, const Vector2 &requestedTextRectSize = Vector2(0,0));
+    virtual void SetStateText(int32 state, const WideString& text, const Vector2& requestedTextRectSize = Vector2(0, 0));
     /**
      \brief Sets text align what will be shown for the requested states.
      \param[in] state state text bit mask to set value for.
      \param[in] align the align .
      */
     virtual void SetStateTextAlign(int32 state, int32 align);
-	/**
+    /**
      \brief Sets text use RTL align flag what will be shown for the requested states.
      \param[in] state state text bit mask to set value for.
      \param[in] value using RTL align flag.
@@ -267,36 +230,20 @@ public:
     */
     virtual void SetStateTextMultilineBySymbol(int32 state, bool value);
     /**
-     \brief Sets background margins for the requested states.
-     \param[in] state state text bit mask to set value for.
-     \param[in] margins the margins.
-     */
-    virtual void SetStateMargins(int32 state, const UIControlBackground::UIMargins* margins);
-    /**
-     \brief Sets text margins for the requested states.
-     \param[in] state state text bit mask to set value for.
-     \param[in] margins the margins.
-     */
-    virtual void SetStateTextMargins(int32 state, const UIControlBackground::UIMargins* margins);
-    /**
      \brief Sets text control what will be used for the requested states.
         UIStaticText is cloned inside button.
      \param[in] state state bit mask to set value for.
      \param[in] textControl control you want to use for the text of the states.
      */
-    virtual void SetStateTextControl(int32 state, UIStaticText *textControl);
+    virtual void SetStateTextControl(int32 state, UIStaticText* textControl);
 
-    virtual void Input(UIEvent *currentInput);
+    void Input(UIEvent* currentInput) override;
 
-    virtual void SystemDraw(const UIGeometricData &geometricData);// Internal method used by ControlSystem
-    virtual void Draw(const UIGeometricData &geometricData);
+    void Draw(const UIGeometricData& geometricData) override;
 
-    virtual void SetParentColor(const Color &parentColor);
-    virtual UIButton *Clone();
-    virtual void CopyDataFrom(UIControl *srcControl);
-
-    virtual void LoadFromYamlNode(const YamlNode * node, UIYamlLoader * loader);
-    virtual YamlNode * SaveToYamlNode(UIYamlLoader * loader);
+    void SetParentColor(const Color& parentColor) override;
+    UIButton* Clone() override;
+    void CopyDataFrom(UIControl* srcControl) override;
 
     /**
      \brief Creates the background for the UIButton for particular state and caches it.
@@ -304,76 +251,77 @@ public:
      */
     virtual void CreateBackgroundForState(int32 state);
 
+    using UIControl::GetBackground; //need to avoid name hiding
+
 protected:
     virtual ~UIButton();
 
 public:
     enum eButtonDrawState
     {
-            DRAW_STATE_UNPRESSED = 0
-        ,	DRAW_STATE_PRESSED_OUTSIDE
-        ,	DRAW_STATE_PRESSED_INSIDE
-        ,	DRAW_STATE_DISABLED
-        ,	DRAW_STATE_SELECTED
-        ,	DRAW_STATE_HOVERED
+        DRAW_STATE_UNPRESSED = 0
+        ,
+        DRAW_STATE_PRESSED_OUTSIDE
+        ,
+        DRAW_STATE_PRESSED_INSIDE
+        ,
+        DRAW_STATE_DISABLED
+        ,
+        DRAW_STATE_SELECTED
+        ,
+        DRAW_STATE_HOVERED
 
-        ,	DRAW_STATE_COUNT
+        ,
+        DRAW_STATE_COUNT
     };
-    UIControlBackground *stateBacks[DRAW_STATE_COUNT];
-    UIStaticText    *stateTexts[DRAW_STATE_COUNT];
+    UIControlBackground* stateBacks[DRAW_STATE_COUNT];
+    UIStaticText* stateTexts[DRAW_STATE_COUNT];
 
-    UIControlBackground *selectedBackground;
-    UIStaticText        *selectedTextBlock;
+    UIStaticText* selectedTextBlock;
 
     int32 oldControlState;
 
     static eButtonDrawState ControlStateToDrawState(int32 state);
     static eControlState DrawStateToControlState(eButtonDrawState state);
-    static const String &DrawStatePostfix(eButtonDrawState state);
+    static const String& DrawStatePostfix(eButtonDrawState state);
     static eButtonDrawState GetStateReplacer(eButtonDrawState drawState);
-private:
-    friend class UIButtonMetadata;
 
+private:
     eButtonDrawState GetActualBackgroundState(eButtonDrawState drawState) const;
-    UIControlBackground *GetActualBackgroundForState(int32 state) const;
-    UIControlBackground *GetBackground(eButtonDrawState drawState) const        { return stateBacks[drawState]; }
-    UIControlBackground *GetActualBackground(eButtonDrawState drawState) const  { return stateBacks[GetActualBackgroundState(drawState)]; }
-    UIControlBackground *GetOrCreateBackground(eButtonDrawState drawState);
-    void SetBackground(eButtonDrawState drawState, UIControlBackground * newBackground);
-    UIControlBackground *CreateDefaultBackground() const{ return new UIControlBackground(); }
+    UIControlBackground* GetActualBackgroundForState(int32 state) const;
+    UIControlBackground* GetBackground(eButtonDrawState drawState) const
+    {
+        return stateBacks[drawState];
+    }
+    UIControlBackground* GetActualBackground(eButtonDrawState drawState) const
+    {
+        return stateBacks[GetActualBackgroundState(drawState)];
+    }
+    UIControlBackground* GetOrCreateBackground(eButtonDrawState drawState);
+    void SetBackground(eButtonDrawState drawState, UIControlBackground* newBackground);
+    UIControlBackground* CreateDefaultBackground() const
+    {
+        return new UIControlBackground();
+    }
 
     eButtonDrawState GetActualTextBlockState(eButtonDrawState drawState) const;
-    UIStaticText *GetActualTextBlockForState(int32 state) const;
-    UIStaticText *GetTextBlock(eButtonDrawState drawState) const        { return stateTexts[drawState]; }
-    UIStaticText *GetActualTextBlock(eButtonDrawState drawState) const  { return stateTexts[GetActualTextBlockState(drawState)]; }
-    UIStaticText *GetOrCreateTextBlock(eButtonDrawState drawState);
-    void SetTextBlock(eButtonDrawState drawState, UIStaticText * newTextBlock);
-    UIStaticText *CreateDefaultTextBlock() const;
+    UIStaticText* GetActualTextBlockForState(int32 state) const;
+    UIStaticText* GetTextBlock(eButtonDrawState drawState) const
+    {
+        return stateTexts[drawState];
+    }
+    UIStaticText* GetActualTextBlock(eButtonDrawState drawState) const
+    {
+        return stateTexts[GetActualTextBlockState(drawState)];
+    }
+    UIStaticText* GetOrCreateTextBlock(eButtonDrawState drawState);
+    void SetTextBlock(eButtonDrawState drawState, UIStaticText* newTextBlock);
+    UIStaticText* CreateDefaultTextBlock() const;
 
     void UpdateStateTextControlSize();
 
 public:
-    virtual int32 GetBackgroundComponentsCount() const;
-    virtual UIControlBackground *GetBackgroundComponent(int32 index) const;
-    virtual UIControlBackground *CreateBackgroundComponent(int32 index) const;
-    virtual void SetBackgroundComponent(int32 index, UIControlBackground *bg);
-    virtual String GetBackgroundComponentName(int32 index) const;
-    
-    virtual int32 GetInternalControlsCount() const;
-    virtual UIControl *GetInternalControl(int32 index) const;
-    virtual UIControl *CreateInternalControl(int32 index) const;
-    virtual void SetInternalControl(int32 index, UIControl *control);
-    virtual String GetInternalControlName(int32 index) const;
-    virtual String GetInternalControlDescriptions() const;
-
-    INTROSPECTION_EXTEND(UIButton, UIControl,
-        nullptr
-        );
 };
 };
 
 #endif // __DAVAENGINE_BUTTON_H__
-
-
-
-

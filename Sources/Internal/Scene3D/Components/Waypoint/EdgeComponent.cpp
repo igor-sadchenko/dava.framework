@@ -1,127 +1,113 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Scene3D/Components/Waypoint/EdgeComponent.h"
 #include "Scene3D/Entity.h"
+#include "Reflection/ReflectionRegistrator.h"
+#include "Reflection/ReflectedMeta.h"
 
 namespace DAVA
 {
+DAVA_VIRTUAL_REFLECTION_IMPL(EdgeComponent)
+{
+    ReflectionRegistrator<EdgeComponent>::Begin()[M::CantBeCreatedManualyComponent(), M::CantBeDeletedManualyComponent()]
+    .ConstructorByPointer()
+    .Field("properties", &EdgeComponent::GetProperties, &EdgeComponent::SetProperties)[M::DisplayName("Edge properties")]
+    .Field("nextEntityName", &EdgeComponent::GetNextEntityName, &EdgeComponent::SetNextEntityName)[M::ReadOnly(), M::DisplayName("Next Entity Name")]
+    .Field("nextEntityTag", &EdgeComponent::GetNextEntityTag, &EdgeComponent::SetNextEntityTag)[M::ReadOnly(), M::DisplayName("Next Entity Tag")]
+    .End();
+}
 
 EdgeComponent::EdgeComponent()
     : Component()
-    , nextEntity(NULL)
-    , properties(NULL)
 {
-    properties = new KeyedArchive();
 }
 
 EdgeComponent::~EdgeComponent()
 {
-    SafeRelease(properties);
-    SafeRelease(nextEntity);
 }
 
 EdgeComponent::EdgeComponent(const EdgeComponent& cp)
     : Component(cp)
 {
-    SetNextEntity(cp.nextEntity);
-    SetProperties(cp.GetProperties());
-}
-    
-Component * EdgeComponent::Clone(Entity * toEntity)
-{
-	EdgeComponent * newComponent = new EdgeComponent();
-	newComponent->SetEntity(toEntity);
-    newComponent->SetNextEntity(GetNextEntity());
-    newComponent->SetProperties(properties);
-    
-	return newComponent;
+    nextEntity = cp.nextEntity;
+    path = cp.path;
+    edge = cp.edge;
 }
 
-void EdgeComponent::Serialize(KeyedArchive *archive, SerializationContext *serializationContext)
+void EdgeComponent::Init(PathComponent* path_, PathComponent::Edge* edge_)
+{
+    path = path_;
+    edge = edge_;
+}
+
+PathComponent* EdgeComponent::GetPath() const
+{
+    return path;
+}
+
+PathComponent::Edge* EdgeComponent::GetEdge() const
+{
+    return edge;
+}
+
+Component* EdgeComponent::Clone(Entity* toEntity)
+{
+    EdgeComponent* newComponent = new EdgeComponent();
+    newComponent->SetEntity(toEntity);
+    newComponent->nextEntity = nextEntity;
+    newComponent->path = path;
+    newComponent->edge = edge;
+
+    return newComponent;
+}
+
+void EdgeComponent::Serialize(KeyedArchive* archive, SerializationContext* serializationContext)
 {
     DVASSERT(false);
 }
 
-void EdgeComponent::Deserialize(KeyedArchive *archive, SerializationContext *serializationContext)
+void EdgeComponent::Deserialize(KeyedArchive* archive, SerializationContext* serializationContext)
 {
     DVASSERT(false);
 }
 
-void EdgeComponent::SetProperties(KeyedArchive *archieve)
+void EdgeComponent::SetProperties(KeyedArchive* archieve)
 {
-    SafeRelease(properties);
-    properties = new KeyedArchive(*archieve);
-}
-    
-void EdgeComponent::SetNextEntity(Entity * _entity)
-{
-    if(nextEntity != _entity) 
-    {
-        SafeRelease(nextEntity);
-        nextEntity = SafeRetain(_entity);
-    }
+    DVASSERT(false);
 }
 
-
-void EdgeComponent::SetNextEntityName(const FastName & name)
+void EdgeComponent::SetNextEntity(Entity* _entity)
 {
-	//do nothing
+    nextEntity = _entity;
+}
+
+void EdgeComponent::SetNextEntityName(const FastName& name)
+{
+    DVASSERT(false);
 }
 
 const FastName EdgeComponent::GetNextEntityName() const
 {
-	FastName nextEntityName;
-	if(nextEntity)
-	{
-		nextEntityName = nextEntity->GetName();
-	}
+    FastName nextEntityName;
+    if (nextEntity)
+    {
+        nextEntityName = nextEntity->GetName();
+    }
 
-	return nextEntityName;
+    return nextEntityName;
 }
 
 void EdgeComponent::SetNextEntityTag(int32 tag)
 {
-	//do nothing
+    DVASSERT(false);
 }
 
 int32 EdgeComponent::GetNextEntityTag() const
 {
     int32 tag = 0;
-	if(nextEntity)
-	{
-		tag = nextEntity->GetTag();
-	}
+    if (nextEntity)
+    {
+        tag = nextEntity->GetTag();
+    }
 
-	return tag;
+    return tag;
 }
-
-
-
 }

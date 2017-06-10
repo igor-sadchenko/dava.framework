@@ -1,36 +1,32 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Scene3D/Components/DebugRenderComponent.h"
+#include "Reflection/ReflectionRegistrator.h"
+#include "Reflection/ReflectedMeta.h"
+#include "Base/GlobalEnum.h"
 
-namespace DAVA 
+ENUM_DECLARE(DAVA::DebugRenderComponent::eDebugDrawFlags)
 {
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_NONE, "DEBUG_DRAW_NONE");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_AABBOX, "DEBUG_DRAW_AABBOX");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_LOCAL_AXIS, "DEBUG_DRAW_LOCAL_AXIS");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_AABOX_CORNERS, "DEBUG_DRAW_AABOX_CORNERS");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_LIGHT_NODE, "DEBUG_DRAW_LIGHT_NODE");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_NORMALS, "DEBUG_DRAW_NORMALS");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_GRID, "DEBUG_DRAW_GRID");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_USERNODE, "DEBUG_DRAW_USERNODE");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_RED_AABBOX, "DEBUG_DRAW_RED_AABBOX");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_DRAW_CAMERA, "DEBUG_DRAW_CAMERA");
+    ENUM_ADD_DESCR(DAVA::DebugRenderComponent::DEBUG_AUTOCREATED, "DEBUG_AUTOCREATED");
+}
+
+namespace DAVA
+{
+DAVA_VIRTUAL_REFLECTION_IMPL(DebugRenderComponent)
+{
+    ReflectionRegistrator<DebugRenderComponent>::Begin()[M::CantBeCreatedManualyComponent()]
+    .ConstructorByPointer()
+    .Field("debugFlags", &DebugRenderComponent::GetDebugFlags, &DebugRenderComponent::SetDebugFlags)[M::DisplayName("Debug Flags"), M::FlagsT<eDebugDrawFlags>()]
+    .End();
+}
 
 DebugRenderComponent::DebugRenderComponent()
     : curDebugFlags(DEBUG_DRAW_NONE)
@@ -40,33 +36,32 @@ DebugRenderComponent::DebugRenderComponent()
 DebugRenderComponent::~DebugRenderComponent()
 {
 }
-    
+
 void DebugRenderComponent::SetDebugFlags(uint32 debugFlags)
 {
     curDebugFlags = debugFlags;
 }
-    
+
 uint32 DebugRenderComponent::GetDebugFlags() const
 {
     return curDebugFlags;
 }
-    
-Component * DebugRenderComponent::Clone(Entity * toEntity)
+
+Component* DebugRenderComponent::Clone(Entity* toEntity)
 {
-    DebugRenderComponent * component = new DebugRenderComponent();
-	component->SetEntity(toEntity);
+    DebugRenderComponent* component = new DebugRenderComponent();
+    component->SetEntity(toEntity);
     component->curDebugFlags = curDebugFlags;
     return component;
 }
 
-void DebugRenderComponent::Serialize(KeyedArchive *archive, SerializationContext *serializationContext)
+void DebugRenderComponent::Serialize(KeyedArchive* archive, SerializationContext* serializationContext)
 {
-	// Don't need to save
+    // Don't need to save
 }
 
-void DebugRenderComponent::Deserialize(KeyedArchive *archive, SerializationContext *serializationContext)
+void DebugRenderComponent::Deserialize(KeyedArchive* archive, SerializationContext* serializationContext)
 {
-	// Don't need to load
+    // Don't need to load
 }
-
 };

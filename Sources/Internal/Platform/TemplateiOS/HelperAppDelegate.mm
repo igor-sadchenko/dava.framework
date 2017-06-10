@@ -1,73 +1,105 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
+#if !defined(__DAVAENGINE_COREV2__)
 
 #include "Base/BaseTypes.h"
 #include "Render/2D/Systems/VirtualCoordinatesSystem.h"
 #if defined(__DAVAENGINE_IPHONE__)
 
+#include "Debug/DVAssertDefaultHandlers.h"
 #include "Platform/DeviceInfo.h"
+#include "Core/Core.h"
 
 #import <UIKit/UIKit.h>
 #import "HelperAppDelegate.h"
 
-extern  void FrameworkWillTerminate();
-extern  void FrameworkDidLaunched();
+extern void FrameworkWillTerminate();
+extern void FrameworkDidLaunched();
 
 static RenderView* renderView = nil;
 
-int DAVA::Core::Run(int argc, char * argv[], AppHandle handle)
+class CoreIOS : public DAVA::Core
 {
-	NSAutoreleasePool * pool = [[NSAutoreleasePool alloc] init];
-	DAVA::Core * core = new DAVA::Core();
+public:
+    void SetScreenScaleMultiplier(DAVA::float32 multiplier) override
+    {
+        if (std::abs(GetScreenScaleMultiplier() - multiplier) >= DAVA::EPSILON)
+        {
+            Core::SetScreenScaleMultiplier(multiplier);
+
+            if (renderView)
+            {
+                ProcessResize();
+
+                rhi::ResetParam params;
+                params.width = rendererParams.width;
+                params.height = rendererParams.height;
+                params.window = [renderView layer];
+
+                DAVA::Renderer::Reset(params);
+            }
+        }
+    }
+
+    void ProcessResize()
+    {
+        DAVA::float32 screenScale = GetScreenScaleFactor();
+
+        //detecting physical screen size and initing core system with this size
+        const DAVA::DeviceInfo::ScreenInfo& screenInfo = DAVA::DeviceInfo::GetScreenInfo();
+        DAVA::int32 width = screenInfo.width;
+        DAVA::int32 height = screenInfo.height;
+
+        eScreenOrientation orientation = GetScreenOrientation();
+        if ((orientation == SCREEN_ORIENTATION_LANDSCAPE_LEFT) ||
+            (orientation == SCREEN_ORIENTATION_LANDSCAPE_RIGHT) ||
+            (orientation == SCREEN_ORIENTATION_LANDSCAPE_AUTOROTATE))
+        {
+            width = screenInfo.height;
+            height = screenInfo.width;
+        }
+
+        DAVA::int32 physicalWidth = width * screenScale;
+        DAVA::int32 physicalHeight = height * screenScale;
+
+        CALayer* layer = [renderView layer];
+        if (layer != nil)
+        {
+            if ([layer isKindOfClass:[CAEAGLLayer class]])
+            {
+                CAEAGLLayer* gl = static_cast<CAEAGLLayer*>(layer);
+                [gl setContentsScale:screenScale];
+            }
+            else if ([layer isKindOfClass:[CAMetalLayer class]])
+            {
+                CAMetalLayer* metal = static_cast<CAMetalLayer*>(layer);
+                metal.drawableSize = CGSizeMake(physicalWidth, physicalHeight);
+            }
+            else
+            {
+                DVASSERT(false && "Unknown CALayer kind while setting rendering scale factor");
+            }
+        }
+
+        DAVA::UIControlSystem::Instance()->vcs->SetInputScreenAreaSize(width, height);
+        DAVA::UIControlSystem::Instance()->vcs->SetPhysicalScreenSize(physicalWidth, physicalHeight);
+
+        rendererParams.window = [renderView layer];
+        rendererParams.width = physicalWidth;
+        rendererParams.height = physicalHeight;
+    }
+};
+
+int DAVA::Core::Run(int argc, char* argv[], AppHandle handle)
+{
+    Assert::SetupDefaultHandlers();
+
+    NSAutoreleasePool* pool = [[NSAutoreleasePool alloc] init];
+    CoreIOS* core = new CoreIOS();
     core->SetCommandLine(argc, argv);
-	core->CreateSingletons();
-	
+    core->CreateSingletons();
+
     FrameworkDidLaunched();
-    
-	//detecting physical screen size and initing core system with this size
-    const DeviceInfo::ScreenInfo & screenInfo = DeviceInfo::GetScreenInfo();
-    int32 width = screenInfo.width;
-    int32 height = screenInfo.height;
-    
-	eScreenOrientation orientation = Instance()->GetScreenOrientation();
-	if ((orientation==SCREEN_ORIENTATION_LANDSCAPE_LEFT)||
-		(orientation==SCREEN_ORIENTATION_LANDSCAPE_RIGHT)||
-		(orientation==SCREEN_ORIENTATION_LANDSCAPE_AUTOROTATE))
-	{
-        width = screenInfo.height;
-        height = screenInfo.width;
-	}
-		
-    float32 scale = DAVA::Core::Instance()->GetScreenScaleFactor();
-		
-	VirtualCoordinatesSystem::Instance()->SetInputScreenAreaSize(width, height);
-    VirtualCoordinatesSystem::Instance()->SetPhysicalScreenSize(width * scale, height * scale);
+
+    core->ProcessResize();
 
     int retVal = UIApplicationMain(argc, argv, nil, @"iOSAppDelegate");
 
@@ -93,16 +125,16 @@ DAVA::Core::eDeviceFamily DAVA::Core::GetDeviceFamily()
 #include "Core/ApplicationCore.h"
 #include "UI/UIScreenManager.h"
 
-
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
+- (BOOL)application:(UIApplication*)application didFinishLaunchingWithOptions:(NSDictionary*)launchOptions
 {
-	UIWindow *wnd = application.keyWindow;
-	wnd.frame = [::UIScreen mainScreen].bounds;
+    UIWindow* wnd = application.keyWindow;
+    wnd.frame = [ ::UIScreen mainScreen].bounds;
 
     renderViewController = [[RenderViewController alloc] init];
 
     DVASSERT(DAVA::Core::Instance()->GetOptions()->IsKeyExists("renderer"));
     rhi::Api rhiRenderer = (rhi::Api)DAVA::Core::Instance()->GetOptions()->GetInt32("renderer");
+
     if (rhiRenderer == rhi::RHI_GLES2)
     {
         renderView = [renderViewController createGLView];
@@ -112,11 +144,7 @@ DAVA::Core::eDeviceFamily DAVA::Core::GetDeviceFamily()
         renderView = [renderViewController createMetalView];
     }
 
-    DAVA::Core::Instance()->rendererParams.window = [renderView layer];
-
-    DAVA::Size2i screenSize = DAVA::VirtualCoordinatesSystem::Instance()->GetPhysicalScreenSize();
-    DAVA::Core::Instance()->rendererParams.width = screenSize.dx;
-    DAVA::Core::Instance()->rendererParams.height = screenSize.dy;
+    ((CoreIOS*)DAVA::Core::Instance())->ProcessResize();
 
     DAVA::UIScreenManager::Instance()->RegisterController(CONTROLLER_GL, renderViewController);
     DAVA::UIScreenManager::Instance()->SetGLControllerId(CONTROLLER_GL);
@@ -128,85 +156,105 @@ DAVA::Core::eDeviceFamily DAVA::Core::GetDeviceFamily()
     return YES;
 }
 
-- (void)applicationDidBecomeActive:(UIApplication *)application
+- (void)applicationDidBecomeActive:(UIApplication*)application
 {
-    DAVA::ApplicationCore * core = DAVA::Core::Instance()->GetApplicationCore();
-    if(core)
+    DAVA::ApplicationCore* core = DAVA::Core::Instance()->GetApplicationCore();
+    if (core)
     {
         core->OnResume();
     }
-    else 
+    else
     {
-       DAVA::Core::Instance()->SetIsActive(true);
+        DAVA::Core::Instance()->SetIsActive(true);
     }
+    DAVA::Core::Instance()->FocusReceived();
 }
 
-- (void)applicationWillResignActive:(UIApplication *)application
+- (void)applicationWillResignActive:(UIApplication*)application
 {
-    DAVA::ApplicationCore * core = DAVA::Core::Instance()->GetApplicationCore();
-    if(core)
+    DAVA::ApplicationCore* core = DAVA::Core::Instance()->GetApplicationCore();
+    if (core)
     {
         core->OnSuspend();
     }
-    else 
+    else
     {
         DAVA::Core::Instance()->SetIsActive(false);
     }
+    DAVA::Core::Instance()->FocusLost();
 }
 
-- (void)applicationDidEnterBackground:(UIApplication *)application
+DAVA::int64 goBackgroundTimeRelativeToBoot = 0;
+DAVA::int64 goBackgroundTime = 0;
+
+- (void)applicationDidEnterBackground:(UIApplication*)application
 {
     bool isLock = false;
     UIApplicationState state = [application applicationState];
     if (state == UIApplicationStateInactive)
     {
-//        NSLog(@"Sent to background by locking screen");
+        //        NSLog(@"Sent to background by locking screen");
         isLock = true;
     }
-//    else if (state == UIApplicationStateBackground)
-//    {
-//        NSLog(@"Sent to background by home button/switching to other app");
-//    }
-	DAVA::Core::Instance()->GoBackground(isLock);
+    //    else if (state == UIApplicationStateBackground)
+    //    {
+    //        NSLog(@"Sent to background by home button/switching to other app");
+    //    }
+    DAVA::Core::Instance()->GoBackground(isLock);
+    DAVA::Core::Instance()->FocusLost();
+
+    goBackgroundTimeRelativeToBoot = DAVA::SystemTimer::GetSystemUptimeUs();
+    goBackgroundTime = DAVA::SystemTimer::GetUs();
 
     rhi::SuspendRendering();
 }
 
-- (void)applicationWillEnterForeground:(UIApplication *)application
+- (void)applicationWillEnterForeground:(UIApplication*)application
 {
-    DAVA::ApplicationCore * core = DAVA::Core::Instance()->GetApplicationCore();
-    if(core)
+    DAVA::int64 timeSpentInBackground1 = DAVA::SystemTimer::GetSystemUptimeUs() - goBackgroundTimeRelativeToBoot;
+    DAVA::int64 timeSpentInBackground2 = DAVA::SystemTimer::GetUs() - goBackgroundTime;
+
+    DAVA::Logger::Debug("Time spent in background %lld us (reported by SystemTimer %lld us)", timeSpentInBackground1, timeSpentInBackground2);
+    // Do adjustment only if SystemTimer has stopped ticking
+    if (timeSpentInBackground1 - timeSpentInBackground2 > 500000l)
     {
-		DAVA::Core::Instance()->GoForeground();
+        DAVA::Core::AdjustSystemTimer(timeSpentInBackground1 - timeSpentInBackground2);
     }
-    else 
+
+    DAVA::ApplicationCore* core = DAVA::Core::Instance()->GetApplicationCore();
+    if (core)
+    {
+        DAVA::Core::Instance()->GoForeground();
+    }
+    else
     {
         DAVA::Core::Instance()->SetIsActive(true);
     }
+    DAVA::Core::Instance()->FocusReceived();
 
     rhi::ResumeRendering();
 }
 
-- (void)applicationWillTerminate:(UIApplication *)application
+- (void)applicationWillTerminate:(UIApplication*)application
 {
-	NSLog(@"Application termination started");
-	DAVA::Core::Instance()->SystemAppFinished();
-	NSLog(@"System release started");
-    
-    if(DAVA::Logger::Instance())
+    NSLog(@"Application termination started");
+    DAVA::Core::Instance()->SystemAppFinished();
+    NSLog(@"System release started");
+
+    if (DAVA::Logger::Instance())
     {
         DAVA::Logger::Instance()->SetLogFilename("");
     }
-    
-//	DAVA::Core::Instance()->ReleaseSingletons();
-    
 
-//	DAVA::Sprite::DumpSprites();
-//	DAVA::Texture::DumpTextures();
+    //	DAVA::Core::Instance()->ReleaseSingletons();
 
-	FrameworkWillTerminate();
-	NSLog(@"Application termination finished");
+    //	DAVA::Sprite::DumpSprites();
+    //	DAVA::Texture::DumpTextures();
+
+    FrameworkWillTerminate();
+    NSLog(@"Application termination finished");
 }
 
 @end
 #endif
+#endif // !__DAVAENGINE_COREV2__

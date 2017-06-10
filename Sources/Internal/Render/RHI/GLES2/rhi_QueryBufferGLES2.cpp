@@ -1,40 +1,34 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-    #include "../Common/rhi_Private.h"
+#include "../Common/rhi_Private.h"
     #include "../Common/rhi_Pool.h"
     #include "rhi_GLES2.h"
 
     #include "Debug/DVAssert.h"
-    #include "FileSystem/Logger.h"
+    #include "Logger/Logger.h"
 using DAVA::Logger;
 
     #include "_gl.h"
+
+#if defined(__DAVAENGINE_IPHONE__)
+
+#define _glBeginQuery(q) glBeginQueryEXT(GL_ANY_SAMPLES_PASSED_EXT, q)
+#define _glEndQuery() glEndQueryEXT(GL_ANY_SAMPLES_PASSED_EXT)
+
+#elif defined(__DAVAENGINE_ANDROID__)
+
+#define _glBeginQuery(q)
+#define _glEndQuery()
+
+#elif defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_WIN32__)
+
+#define _glBeginQuery(q) glBeginQuery(GL_SAMPLES_PASSED, q)
+#define _glEndQuery() glEndQuery(GL_SAMPLES_PASSED)
+
+#else
+
+#define _glBeginQuery(q) glBeginQuery(GL_ANY_SAMPLES_PASSED, q)
+#define _glEndQuery() glEndQuery(GL_ANY_SAMPLES_PASSED)
+
+#endif
 
 namespace rhi
 {
@@ -44,124 +38,176 @@ class
 QueryBufferGLES2_t
 {
 public:
-    QueryBufferGLES2_t();
-    ~QueryBufferGLES2_t();
+    QueryBufferGLES2_t()
+        : curObjectIndex(DAVA::InvalidIndex)
+        , bufferCompleted(false){};
+    ~QueryBufferGLES2_t(){};
 
-    std::vector<GLuint> query;
+    std::vector<std::pair<GLuint, uint32>> pendingQueries;
+    std::vector<uint32> results;
+    uint32 curObjectIndex;
+    uint32 bufferCompleted : 1;
 };
 
 typedef ResourcePool<QueryBufferGLES2_t, RESOURCE_QUERY_BUFFER, QueryBuffer::Descriptor, false> QueryBufferGLES2Pool;
 RHI_IMPL_POOL(QueryBufferGLES2_t, RESOURCE_QUERY_BUFFER, QueryBuffer::Descriptor, false);
 
+std::vector<GLuint> QueryObjectGLES2Pool;
+
 //==============================================================================
 
-QueryBufferGLES2_t::QueryBufferGLES2_t()
-{
-}
-
-//------------------------------------------------------------------------------
-
-QueryBufferGLES2_t::~QueryBufferGLES2_t()
-{
-}
-
-static Handle
-gles2_QueryBuffer_Create(uint32 maxObjectCount)
+static Handle gles2_QueryBuffer_Create(uint32 maxObjectCount)
 {
     Handle handle = QueryBufferGLES2Pool::Alloc();
     QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
 
-    if (buf)
-    {
-        buf->query.resize(maxObjectCount);
-        memset(&(buf->query[0]), 0, sizeof(buf->query[0]) * buf->query.size());
-    }
+    buf->results.resize(maxObjectCount);
+    memset(buf->results.data(), 0, sizeof(uint32) * buf->results.size());
+    buf->pendingQueries.clear();
+    buf->curObjectIndex = DAVA::InvalidIndex;
+    buf->bufferCompleted = false;
 
     return handle;
 }
 
-static void
-gles2_QueryBuffer_Reset(Handle handle)
+static void gles2_QueryBuffer_Reset(Handle handle)
 {
     QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
 
-    if (buf)
+    memset(buf->results.data(), 0, sizeof(uint32) * buf->results.size());
+
+    if (buf->pendingQueries.size())
     {
+        for (size_t q = 0; q < buf->pendingQueries.size(); ++q)
+            QueryObjectGLES2Pool.push_back(buf->pendingQueries[q].first);
+
+        buf->pendingQueries.clear();
     }
+
+    buf->curObjectIndex = DAVA::InvalidIndex;
+    buf->bufferCompleted = false;
 }
 
-static void
-gles2_QueryBuffer_Delete(Handle handle)
+static void gles2_QueryBuffer_Delete(Handle handle)
 {
     QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
 
-    if (buf)
+    if (buf->pendingQueries.size())
     {
-        for (std::vector<GLuint>::iterator q = buf->query.begin(), q_end = buf->query.end(); q != q_end; ++q)
-        {
-            GLuint id = *q;
+        for (size_t q = 0; q < buf->pendingQueries.size(); ++q)
+            QueryObjectGLES2Pool.push_back(buf->pendingQueries[q].first);
 
-            if (id)
-            {
-                #if defined(__DAVAENGINE_IPHONE__)
-                glDeleteQueriesEXT(1, &id);
-		#elif defined(__DAVAENGINE_ANDROID__)
-                #else
-                glDeleteQueries(1, &id);
-                #endif
-            }
-        }
-
-        buf->query.clear();
+        buf->pendingQueries.clear();
     }
 
     QueryBufferGLES2Pool::Free(handle);
 }
 
-static bool
-gles2_QueryBuffer_IsReady(Handle handle, uint32 objectIndex)
+static void gles2_Check_Query_Results(QueryBufferGLES2_t* buf)
+{
+    if (buf->pendingQueries.empty())
+        return;
+
+    const uint32 GLES2_MAX_PENDING_QUERIES = 256;
+
+    GLCommand smallCmdBuffer[GLES2_MAX_PENDING_QUERIES];
+    static DAVA::Vector<GLCommand> largeCmdBuffer;
+
+    uint32 smallResultsBuffer[GLES2_MAX_PENDING_QUERIES];
+    static DAVA::Vector<uint32> largeResultsBuffer;
+
+    uint32 cmdCount = uint32(buf->pendingQueries.size());
+
+    GLCommand* cmd = smallCmdBuffer;
+    uint32* results = smallResultsBuffer;
+    if (cmdCount > GLES2_MAX_PENDING_QUERIES)
+    {
+        largeCmdBuffer.resize(cmdCount);
+        cmd = largeCmdBuffer.data();
+
+        largeResultsBuffer.resize(cmdCount);
+        results = largeResultsBuffer.data();
+    }
+
+    for (uint32 q = 0; q < cmdCount; ++q)
+    {
+        results[q] = uint32(-1);
+        cmd[q] = { GLCommand::GET_QUERY_RESULT_NO_WAIT, { uint64(buf->pendingQueries[q].first), uint64(&results[q]) } };
+    }
+
+    ExecGL(cmd, cmdCount);
+
+    for (int32 q = cmdCount - 1; q >= 0; --q)
+    {
+        uint32 resultIndex = buf->pendingQueries[q].second;
+        if (results[q] != uint32(-1))
+        {
+            if (resultIndex < buf->results.size())
+                buf->results[resultIndex] += results[q];
+
+            QueryObjectGLES2Pool.push_back(buf->pendingQueries[q].first);
+
+            buf->pendingQueries[q] = buf->pendingQueries.back();
+            buf->pendingQueries.pop_back();
+        }
+    }
+}
+
+static bool gles2_QueryBuffer_IsReady(Handle handle)
 {
     bool ready = false;
     QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
 
-    if (buf && objectIndex < buf->query.size())
+    if (buf->bufferCompleted)
     {
-        GLuint result = 0;
-
-        #if defined(__DAVAENGINE_IPHONE__)
-        glGetQueryObjectuivEXT(buf->query[objectIndex], GL_QUERY_RESULT_AVAILABLE_EXT, &result);
-	#elif defined(__DAVAENGINE_ANDROID__)
-        #else
-        glGetQueryObjectuiv(buf->query[objectIndex], GL_QUERY_RESULT_AVAILABLE, &result);
-        #endif
-
-        ready = result == GL_TRUE;
+        gles2_Check_Query_Results(buf);
+        ready = (buf->pendingQueries.size() == 0);
     }
 
     return ready;
 }
 
-static int
-gles2_QueryBuffer_Value(Handle handle, uint32 objectIndex)
+static bool gles2_QueryBuffer_ObjectIsReady(Handle handle, uint32 objectIndex)
 {
-    int value = 0;
+    bool ready = false;
     QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
 
-    if (buf && objectIndex < buf->query.size())
+    if (buf->bufferCompleted)
     {
-        GLuint result = 0;
+        gles2_Check_Query_Results(buf);
 
-        #if defined(__DAVAENGINE_IPHONE__)
-        glGetQueryObjectuivEXT(buf->query[objectIndex], GL_QUERY_RESULT_EXT, &result);
-		#elif defined(__DAVAENGINE_ANDROID__)
-        #else
-        glGetQueryObjectuiv(buf->query[objectIndex], GL_QUERY_RESULT, &result);
-        #endif
-
-        value = result;
+        ready = true;
+        for (size_t q = 0; q < buf->pendingQueries.size(); ++q)
+        {
+            if (buf->pendingQueries[q].second == objectIndex)
+            {
+                ready = false;
+                break;
+            }
+        }
     }
 
-    return value;
+    return ready;
+}
+
+static int32 gles2_QueryBuffer_Value(Handle handle, uint32 objectIndex)
+{
+    QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
+
+    gles2_Check_Query_Results(buf);
+
+    if (objectIndex < buf->results.size())
+    {
+        return buf->results[objectIndex];
+    }
+
+    return 0;
 }
 
 namespace QueryBufferGLES2
@@ -172,62 +218,82 @@ void SetupDispatch(Dispatch* dispatch)
     dispatch->impl_QueryBuffer_Reset = &gles2_QueryBuffer_Reset;
     dispatch->impl_QueryBuffer_Delete = &gles2_QueryBuffer_Delete;
     dispatch->impl_QueryBuffer_IsReady = &gles2_QueryBuffer_IsReady;
+    dispatch->impl_QueryBuffer_ObjectIsReady = &gles2_QueryBuffer_ObjectIsReady;
     dispatch->impl_QueryBuffer_Value = &gles2_QueryBuffer_Value;
 }
 
-void BeginQuery(Handle handle, uint32 objectIndex)
+void SetQueryIndex(Handle handle, uint32 objectIndex)
 {
     QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
 
-    if (buf && objectIndex < buf->query.size())
+    if (buf->curObjectIndex != objectIndex)
     {
-        GLuint q = buf->query[objectIndex];
-
-        if (!q)
+        if (buf->curObjectIndex != DAVA::InvalidIndex)
         {
-            #if defined(__DAVAENGINE_IPHONE__)
-            glGenQueriesEXT(1, &q);
-	    #elif defined(__DAVAENGINE_ANDROID__)
-            #else
-            glGenQueries(1, &q);
-            #endif
-
-            buf->query[objectIndex] = q;
+            _glEndQuery();
+            buf->curObjectIndex = DAVA::InvalidIndex;
         }
 
-        if (q)
+        if (objectIndex != DAVA::InvalidIndex)
         {
-            #if defined(__DAVAENGINE_IPHONE__)
-            glBeginQueryEXT(GL_ANY_SAMPLES_PASSED_EXT, q);
-	        #elif defined(__DAVAENGINE_ANDROID__)
-            #elif defined(__DAVAENGINE_MACOS__)
-            glBeginQuery(GL_SAMPLES_PASSED, q);
-            #else
-            glBeginQuery(GL_ANY_SAMPLES_PASSED, q);
-            #endif
+            GLuint q = 0;
+            if (QueryObjectGLES2Pool.size())
+            {
+                q = QueryObjectGLES2Pool.back();
+                QueryObjectGLES2Pool.pop_back();
+            }
+            else
+            {
+#if defined(__DAVAENGINE_IPHONE__)
+                glGenQueriesEXT(1, &q);
+#elif defined(__DAVAENGINE_ANDROID__)
+#else
+                glGenQueries(1, &q);
+#endif
+            }
+
+            if (q)
+            {
+                _glBeginQuery(q);
+                buf->pendingQueries.push_back(std::make_pair(q, objectIndex));
+
+                buf->curObjectIndex = objectIndex;
+            }
         }
     }
 }
 
-void EndQuery(Handle handle, uint32 objectIndex)
+void QueryComplete(Handle handle)
 {
     QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
 
-    if (buf && objectIndex < buf->query.size())
+    if (buf->curObjectIndex != DAVA::InvalidIndex)
     {
-        GLuint q = buf->query[objectIndex];
+        _glEndQuery();
+        buf->curObjectIndex = DAVA::InvalidIndex;
+    }
 
-        if (q)
-        {
-            #if defined(__DAVAENGINE_IPHONE__)
-            glEndQueryEXT(GL_ANY_SAMPLES_PASSED_EXT);
-			#elif defined(__DAVAENGINE_ANDROID__)
-            #elif defined(__DAVAENGINE_MACOS__)
-            glEndQuery(GL_SAMPLES_PASSED);
-            #else
-            glEndQuery(GL_ANY_SAMPLES_PASSED);
-            #endif
-        }
+    buf->bufferCompleted = true;
+}
+
+bool QueryIsCompleted(Handle handle)
+{
+    QueryBufferGLES2_t* buf = QueryBufferGLES2Pool::Get(handle);
+    DVASSERT(buf);
+
+    return buf->bufferCompleted;
+}
+
+void ReleaseQueryObjectsPool()
+{
+    if (QueryObjectGLES2Pool.size())
+    {
+        GLCommand cmd = { GLCommand::DELETE_QUERIES, { uint64(QueryObjectGLES2Pool.size()), uint64(QueryObjectGLES2Pool.data()) } };
+        ExecGL(&cmd, 1);
+
+        QueryObjectGLES2Pool.clear();
     }
 }
 }

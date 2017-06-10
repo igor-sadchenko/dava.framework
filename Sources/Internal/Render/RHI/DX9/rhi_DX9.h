@@ -1,38 +1,9 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __RHI_DX9_H__
 #define __RHI_DX9_H__
 
 #include "../rhi_Public.h"
 #include "../Common/rhi_Private.h"
-#include "../Common/rhi_Impl.h"
+#include "../Common/rhi_BackendImpl.h"
 
 namespace rhi
 {
@@ -47,6 +18,7 @@ void Init(uint32 maxCount);
 void SetToRHI(Handle vb, unsigned stream_i, unsigned offset, unsigned stride);
 void ReleaseAll();
 void ReCreateAll();
+void LogUnrestoredBacktraces();
 unsigned NeedRestoreCount();
 }
 
@@ -57,6 +29,7 @@ void SetupDispatch(Dispatch* dispatch);
 void SetToRHI(Handle vb);
 void ReleaseAll();
 void ReCreateAll();
+void LogUnrestoredBacktraces();
 unsigned NeedRestoreCount();
 }
 
@@ -64,15 +37,34 @@ namespace QueryBufferDX9
 {
 void SetupDispatch(Dispatch* dispatch);
 
-void BeginQuery(Handle buf, uint32 objectIndex);
-void EndQuery(Handle buf, uint32 objectIndex);
+void SetQueryIndex(Handle buf, uint32 objectIndex);
+void QueryComplete(Handle buf);
+bool QueryIsCompleted(Handle buf);
+
+void ReleaseQueryPool();
+void ReleaseAll();
+}
+
+namespace PerfQueryDX9
+{
+void SetupDispatch(Dispatch* dispatch);
+
+void IssueTimestampQuery(Handle handle);
+void BeginMeasurment();
+void EndMeasurment();
+
+void ReleaseAll();
+
+void ObtainPerfQueryMeasurment();
+void ReleasePerfQueryPool();
 }
 
 namespace PipelineStateDX9
 {
 void SetupDispatch(Dispatch* dispatch);
-unsigned VertexLayoutStride(Handle ps);
+unsigned VertexLayoutStride(Handle ps, uint32 stream);
 void SetToRHI(Handle ps, uint32 layoutUID);
+void SetupVertexStreams(Handle ps, uint32 layoutUID, uint32 instCount);
 }
 
 namespace ConstBufferDX9
@@ -80,7 +72,7 @@ namespace ConstBufferDX9
 void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
 void InitializeRingBuffer(uint32 size);
-const void* InstData(Handle cb);
+const void* Instance(Handle cb);
 void SetToRHI(Handle cb, const void* instData);
 void InvalidateAllConstBufferInstances();
 }
@@ -90,10 +82,12 @@ namespace TextureDX9
 void Init(uint32 maxCount);
 void SetupDispatch(Dispatch* dispatch);
 void SetToRHI(Handle tex, unsigned unitIndex);
-void SetAsRenderTarget(Handle tex);
+void SetAsRenderTarget(Handle tex, unsigned target_i = 0);
 void SetAsDepthStencil(Handle tex);
 void ReleaseAll();
 void ReCreateAll();
+void LogUnrestoredBacktraces();
+void ResolveMultisampling(Handle from, Handle to);
 unsigned NeedRestoreCount();
 }
 
@@ -149,7 +143,7 @@ DX9Command
 
         CREATE_TEXTURE = 41,
         CREATE_CUBE_TEXTURE = 42,
-        GET_TEXTURE_SURFACE_LEVEl = 43,
+        GET_TEXTURE_SURFACE_LEVEL = 43,
         SET_TEXTURE_AUTOGEN_FILTER_TYPE = 44,
         LOCK_TEXTURE_RECT = 45,
         UNLOCK_TEXTURE_RECT = 46,
@@ -166,7 +160,15 @@ DX9Command
         GET_QUERY_DATA = 61,
 
         QUERY_INTERFACE = 101,
-        RELEASE = 102
+        RELEASE = 102,
+
+        READ_TEXTURE_LEVEL,
+        READ_CUBETEXTURE_LEVEL,
+
+        CREATE_RENDER_TARGET,
+        CREARE_DEPTHSTENCIL_SURFACE,
+
+        SYNC_CPU_GPU,
     };
 
     Func func;
@@ -174,7 +176,7 @@ DX9Command
     long retval;
 };
 
-void ExecDX9(DX9Command* cmd, uint32 cmdCount, bool force_immediate = false);
+void ExecDX9(DX9Command* cmd, uint32 cmdCount, bool forceExecute);
 
 //==============================================================================
 }

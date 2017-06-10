@@ -1,44 +1,18 @@
-/*==================================================================================
-Copyright (c) 2008, binaryzebra
-All rights reserved.
-
-Redistribution and use in source and binary forms, with or without
-modification, are permitted provided that the following conditions are met:
-
-* Redistributions of source code must retain the above copyright
-notice, this list of conditions and the following disclaimer.
-* Redistributions in binary form must reproduce the above copyright
-notice, this list of conditions and the following disclaimer in the
-documentation and/or other materials provided with the distribution.
-* Neither the name of the binaryzebra nor the
-names of its contributors may be used to endorse or promote products
-derived from this software without specific prior written permission.
-
-THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
 #include "FXCache.h"
 #include "Render/ShaderCache.h"
 #include "Render/Material/NMaterialNames.h"
 #include "Render/Highlevel/RenderLayer.h"
 #include "Render/Highlevel/RenderPassNames.h"
 
+#include "Logger/Logger.h"
 #include "Utils/Utils.h"
 #include "FileSystem/YamlParser.h"
 #include "FileSystem/YamlNode.h"
+#include "Scene3D/Systems/QualitySettingsSystem.h"
 
 namespace DAVA
 {
-namespace //for private members
+namespace FXCacheDetails
 {
 Map<Vector<int32>, FXDescriptor> fxDescriptors;
 Map<std::pair<FastName, FastName>, FXDescriptor> oldTemplateMap;
@@ -49,11 +23,12 @@ bool initialized = false;
 
 namespace FXCache
 {
-rhi::DepthStencilState::Descriptor LoadDepthStencilState(const YamlNode* stateNode);
 const FXDescriptor& LoadFXFromOldTemplate(const FastName& fxName, HashMap<FastName, int32>& defines, const Vector<int32>& key, const FastName& quality);
 
 void Initialize()
 {
+    using namespace FXCacheDetails;
+
     DVASSERT(!initialized);
     initialized = true;
 
@@ -65,7 +40,7 @@ void Initialize()
     defaultPass.renderLayer = RenderLayer::RENDER_LAYER_OPAQUE_ID;
     defaultPass.shaderFileName = FastName("~res:/Materials/Shaders/Default/materials");
     defaultPass.shader = ShaderDescriptorCache::GetShaderDescriptor(defaultPass.shaderFileName, defFlags);
-    defaultPass.templateDefines.insert(FastName("MATERIAL_TEXTURE"));
+    defaultPass.templateDefines[FastName("MATERIAL_TEXTURE")] = 1;
 
     defaultFX.renderPassDescriptors.clear();
     defaultFX.renderPassDescriptors.push_back(defaultPass);
@@ -74,40 +49,45 @@ void Initialize()
 void Uninitialize()
 {
     Clear();
-    initialized = false;
+    FXCacheDetails::initialized = false;
 }
 void Clear()
 {
-    DVASSERT(initialized);
+    DVASSERT(FXCacheDetails::initialized);
     //RHI_COMPLETE
 }
 
 const FXDescriptor& GetFXDescriptor(const FastName& fxName, HashMap<FastName, int32>& defines, const FastName& quality)
 {
+    using namespace FXCacheDetails;
+
     DVASSERT(initialized);
 
     if (!fxName.IsValid())
     {
-        return defaultFX;
+        return FXCacheDetails::defaultFX;
     }
 
-    Vector<int32> key;
-    ShaderDescriptorCache::BuildFlagsKey(fxName, defines, key);
+    Vector<int32> key = ShaderDescriptorCache::BuildFlagsKey(fxName, defines);
 
     if (quality.IsValid()) //quality made as part of fx key
         key.push_back(quality.Index());
+
+    //[METAL_COMPLETE] to be able to switch fx depending on metal/non-metal option
+    key.push_back(QualitySettingsSystem::Instance()->GetAllowMetalFeatures() ? 1 : 0);
 
     auto it = fxDescriptors.find(key);
     if (it != fxDescriptors.end())
         return it->second;
 
     //not found - load new
-    //for
     return LoadFXFromOldTemplate(fxName, defines, key, quality);
 }
 
 const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& quality)
 {
+    using namespace FXCacheDetails;
+
     auto oldTemplate = oldTemplateMap.find(std::make_pair(fxName, quality));
     if (oldTemplate != oldTemplateMap.end())
     {
@@ -115,7 +95,7 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
     }
 
     FilePath fxPath(fxName.c_str());
-    YamlParser* parser = YamlParser::Create(fxPath);
+    ScopedPtr<YamlParser> parser(YamlParser::Create(fxPath));
     YamlNode* rootNode = nullptr;
     if (parser)
     {
@@ -124,19 +104,13 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
     if (!rootNode)
     {
         Logger::Error("Can't load requested old-material-template-into-fx: %s", fxPath.GetAbsolutePathname().c_str());
-        SafeRelease(parser);
-        return defaultFX;
+        return FXCacheDetails::defaultFX;
     }
 
     const YamlNode* materialTemplateNode = rootNode->Get("MaterialTemplate");
     const YamlNode* renderTechniqueNode = nullptr;
     if (materialTemplateNode) //multy-quality material
     {
-        /*int32 quality = 0;
-        auto it = defines.find(NMaterialQualityName::QUALITY_FLAG_NAME);
-        if (it != defines.end())
-        quality = it->second;*/
-
         const YamlNode* qualityNode = nullptr;
         if (quality.IsValid())
         {
@@ -156,7 +130,7 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
             }
             qualityNode = materialTemplateNode->Get(materialTemplateNode->GetCount() - 1);
         }
-        YamlParser* parserTechnique = YamlParser::Create(qualityNode->AsString());
+        ScopedPtr<YamlParser> parserTechnique(YamlParser::Create(qualityNode->AsString()));
         if (parserTechnique)
         {
             renderTechniqueNode = parserTechnique->GetRootNode();
@@ -164,11 +138,9 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
         if (!renderTechniqueNode)
         {
             Logger::Error("Can't load technique from template: %s with quality %s", fxPath.GetAbsolutePathname().c_str(), quality.c_str());
-            SafeRelease(parserTechnique);
-            return defaultFX;
+            return FXCacheDetails::defaultFX;
         }
 
-        SafeRelease(parser);
         parser = parserTechnique;
     }
     else //technique
@@ -178,10 +150,9 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
 
     //now load render technique
     const YamlNode* stateNode = renderTechniqueNode->Get("RenderTechnique");
-    if (!stateNode)
+    if (stateNode == nullptr)
     {
-        SafeRelease(parser);
-        return defaultFX;
+        return FXCacheDetails::defaultFX;
     }
 
     FXDescriptor target;
@@ -229,7 +200,7 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
                 for (int32 k = 0; k < count; ++k)
                 {
                     const YamlNode* singleDefineNode = definesNode->Get(k);
-                    passDescriptor.templateDefines.insert(FastName(singleDefineNode->AsString().c_str()));
+                    passDescriptor.templateDefines[FastName(singleDefineNode->AsString().c_str())] = 1;
                 }
             }
 
@@ -284,7 +255,6 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
                         else if (state == "STATE_STENCIL_TEST")
                         {
                             passDescriptor.depthStateDescriptor.stencilEnabled = 1;
-                            passDescriptor.depthStateDescriptor.stencilTwoSided = 1;
 
                             const YamlNode* stencilNode = renderStateNode->Get("stencil");
                             if (stencilNode)
@@ -292,7 +262,7 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
                                 const YamlNode* stencilRefNode = stencilNode->Get("ref");
                                 if (stencilRefNode)
                                 {
-                                    uint8 refValue = (uint8)stencilRefNode->AsInt32();
+                                    uint8 refValue = static_cast<uint8>(stencilRefNode->AsInt32());
                                     passDescriptor.depthStateDescriptor.stencilBack.refValue = refValue;
                                     passDescriptor.depthStateDescriptor.stencilFront.refValue = refValue;
                                 }
@@ -300,7 +270,7 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
                                 const YamlNode* stencilMaskNode = stencilNode->Get("mask");
                                 if (stencilMaskNode)
                                 {
-                                    uint8 maskValue = (uint8)stencilMaskNode->AsInt32();
+                                    uint8 maskValue = static_cast<uint8>(stencilMaskNode->AsInt32());
                                     passDescriptor.depthStateDescriptor.stencilBack.readMask = maskValue;
                                     passDescriptor.depthStateDescriptor.stencilBack.writeMask = maskValue;
                                     passDescriptor.depthStateDescriptor.stencilFront.readMask = maskValue;
@@ -355,6 +325,11 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
                                     passDescriptor.depthStateDescriptor.stencilBack.depthFailOperation = GetStencilOpByName(stencilZFailNode->AsString());
                                 }
                             }
+
+                            passDescriptor.depthStateDescriptor.stencilTwoSided = (memcmp(&passDescriptor.depthStateDescriptor.stencilBack,
+                                                                                          &passDescriptor.depthStateDescriptor.stencilFront,
+                                                                                          sizeof(rhi::DepthStencilState::Descriptor::StencilDescriptor)
+                                                                                          ) != 0);
                         }
                     }
                 }
@@ -363,7 +338,24 @@ const FXDescriptor& LoadOldTempalte(const FastName& fxName, const FastName& qual
             target.renderPassDescriptors.push_back(passDescriptor);
         }
     }
-    SafeRelease(parser);
+
+    //add render pass for reflection/refraction - hard coded for now
+    //TODO: rethink how to modify material template without full copy for all passes
+    //do it only for editor or if metal features are allowed - performance issue
+    if (QualitySettingsSystem::Instance()->GetAllowMetalFeatures() || QualitySettingsSystem::Instance()->GetRuntimeQualitySwitching())
+    {
+        for (RenderPassDescriptor& pass : target.renderPassDescriptors)
+        {
+            if (pass.passName == PASS_FORWARD)
+            {
+                RenderPassDescriptor noFog = pass;
+                noFog.passName = PASS_REFLECTION_REFRACTION;
+                noFog.templateDefines[NMaterialFlagName::FLAG_FOG_HALFSPACE] = 0;
+                target.renderPassDescriptors.push_back(noFog);
+                break;
+            }
+        }
+    }
 
     return oldTemplateMap[std::make_pair(fxName, quality)] = target;
 }
@@ -378,7 +370,7 @@ const FXDescriptor& LoadFXFromOldTemplate(const FastName& fxName, HashMap<FastNa
     {
         HashMap<FastName, int32> shaderDefines = defines;
         for (auto& templateDefine : pass.templateDefines)
-            shaderDefines[templateDefine] = 1;
+            shaderDefines[templateDefine.first] = templateDefine.second;
         if (pass.hasBlend)
         {
             if (shaderDefines.find(NMaterialFlagName::FLAG_BLENDING) == shaderDefines.end())
@@ -389,10 +381,18 @@ const FXDescriptor& LoadFXFromOldTemplate(const FastName& fxName, HashMap<FastNa
             shaderDefines.erase(NMaterialFlagName::FLAG_BLENDING);
         }
 
+        //[METAL_COMPLETE] THIS IS TEMPORARY SOLUTION TO ENNABLE IT FOR METAL ONLY
+        if (!QualitySettingsSystem::Instance()->GetAllowMetalFeatures())
+        {
+            shaderDefines.erase(NMaterialFlagName::FLAG_SPECULAR);
+            shaderDefines.erase(NMaterialFlagName::FLAG_FLOWMAP_SKY);
+        }
+
         pass.shader = ShaderDescriptorCache::GetShaderDescriptor(pass.shaderFileName, shaderDefines);
+        pass.depthStencilState = rhi::AcquireDepthStencilState(pass.depthStateDescriptor);
     }
 
-    return fxDescriptors[key] = target;
+    return FXCacheDetails::fxDescriptors[key] = target;
 }
 }
 }

@@ -1,305 +1,398 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
+#pragma once
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
+#include "Debug/DVAssert.h"
 
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-#ifndef __DAVA_SIGNAL_H__
-#define __DAVA_SIGNAL_H__
-
-#include "Base/BaseTypes.h"
-#include "Concurrency/Mutex.h"
-#include "Concurrency/LockGuard.h"
-#include "Concurrency/Thread.h"
-#include "Concurrency/Atomic.h"
+#include "Base/List.h"
+#include "Base/Token.h"
 #include "Functional/Function.h"
-#include "Functional/SignalBase.h"
+#include "Functional/TrackedObject.h"
+#include "Functional/Private/SignalBase.h"
 
-// #define ENABLE_MULTITHREADED_SIGNALS // <-- this still isn't implemented
-
-namespace DAVA  {
-namespace Sig11 {
-
-struct DummyMutex
+namespace DAVA
 {
-    void Lock() { }
-    void Unlock() { }
-    bool TryLock() { return true; }
-};
+/**
+    \ingroup functional
+    Signal represents callback with multiple targets. Signal is connected to some set of slots, 
+    which are callback receivers (also called event targets or subscribers), which are called
+    when the signal is "emitted."
 
-struct DymmyThreadID
-{ };
+    Signals and slots can be managed - can track connections and are capable of automatically 
+    disconnecting signal/slot connections when either is destroyed. This enables the user 
+    to make signal/slot connections without expending a great effort to manage the lifetimes
+    of those connections with regard to the lifetimes of all objects involved. 
+    See TrackedObject for more info.
 
-template<typename MutexType, typename ThreadIDType, typename... Args>
-class SignalImpl : public SignalBase
-{
-public:
-    using Func = Function < void(Args...) > ;
 
-    SignalImpl() = default;
-    SignalImpl(const SignalImpl &) = delete;
-    SignalImpl& operator=(const SignalImpl &) = delete;
+    ## Examples
 
-    ~SignalImpl()
+    ### Hello World
+
+    The following example writes "Hello, World!" using signals and slots. First, we create a signal `sig`,
+    a signal that takes no arguments. Next, we connect the `HelloWorld::foo` function to the signal using the
+    Signal::Connect() method. Finally, use the signal `sig` like a function to call the slots, which in 
+    turns invokes HelloWorld::operator() to print "Hello, World!".
+
+    \code
+    struct HelloWorld
     {
-        DisconnectAll();
-    }
-
-    template<typename Fn>
-    SigConnectionID Connect(const Fn& fn, ThreadIDType tid = {})
-    {
-        LockGuard<MutexType> guard(mutex);
-        return AddConnection(nullptr, Func(fn), tid);
-    }
-
-    template<typename Obj, typename Cls>
-    SigConnectionID Connect(Obj *obj, void (Cls::* const& fn)(Args...), ThreadIDType tid = ThreadIDType())
-    {
-        LockGuard<MutexType> guard(mutex);
-        return AddConnection(TrackedObject::Cast(obj), Func(obj, fn), tid);
-    }
-
-    template<typename Obj, typename Cls>
-    SigConnectionID Connect(Obj *obj, void (Cls::* const& fn)(Args...) const, ThreadIDType tid = ThreadIDType())
-    {
-        LockGuard<MutexType> guard(mutex);
-        return AddConnection(TrackedObject::Cast(obj), Func(obj, fn), tid);
-    }
-
-    void Disconnect(SigConnectionID id)
-    {
-        LockGuard<MutexType> guard(mutex);
-
-        auto it = connections.find(id);
-        if (it != connections.end())
-        {
-            TrackedObject *obj = it->second.obj;
-            if (nullptr != obj)
-            {
-                obj->Untrack(this);
-            }
-
-            connections.erase(it);
-        }
-    }
-
-    void Disconnect(TrackedObject *obj) override final
-    {
-        if (nullptr != obj)
-        {
-            LockGuard<MutexType> guard(mutex);
-
-            auto it = connections.begin();
-            auto end = connections.end();
-
-            while (it != end)
-            {
-                if (it->second.obj == obj)
-                {
-                    obj->Untrack(this);
-                    it = connections.erase(it);
-                }
-                else
-                {
-                    it++;
-                }
-            }
-        }
-    }
-
-    void DisconnectAll()
-    {
-        LockGuard<MutexType> guard(mutex);
-
-        for (auto&& con : connections)
-        {
-            TrackedObject *obj = con.second.obj;
-            if (nullptr != obj)
-            {
-                obj->Untrack(this);
-            }
-        }
-
-        connections.clear();
-    }
-
-    void Track(SigConnectionID id, TrackedObject* obj)
-    {
-        LockGuard<MutexType> guard(mutex);
-
-        auto it = connections.find(id);
-        if (it != connections.end())
-        {
-            if (nullptr != it->second.obj)
-            {
-                it->second.obj->Untrack(this);
-                it->second.obj = nullptr;
-            }
-
-            if (nullptr != obj)
-            {
-                it->second.obj = obj;
-                obj->Track(this);
-            }
-        }
-    }
-
-    TrackedObject* GetTracked(SigConnectionID id) const
-    {
-        TrackedObject* ret = nullptr;
-
-        auto it = connections.find(id);
-        if (it != connections.end())
-        {
-            ret = it->second.obj;
-        }
-
-        return ret;
-    }
-
-    void Block(SigConnectionID id, bool block)
-    {
-        auto it = connections.find(id);
-        if (it != connections.end())
-        {
-            it->second.blocked = block;
-        }
-    }
-
-    bool IsBlocked(SigConnectionID id) const
-    {
-        bool ret = false;
-
-        auto it = connections.find(id);
-        if (it != connections.end())
-        {
-            ret = it->second.blocked;
-        }
-
-        return ret;
-    }
-
-    virtual void Emit(Args...) = 0;
-
-protected:
-    struct ConnData
-    {
-        ConnData(Func&& fn_, TrackedObject* obj_, ThreadIDType tid_)
-            : fn(std::move(fn_)), obj(obj_), tid(tid_), blocked(false)
-        { }
-
-        Func fn;
-        TrackedObject* obj;
-        ThreadIDType tid;
-        bool blocked;
+        void foo() const { std::cout << "Hello, World!\n"; }
     };
 
-    MutexType mutex;
-    Map<SigConnectionID, ConnData> connections;
-
-private:
-    SigConnectionID AddConnection(TrackedObject* obj, Func&& fn, const ThreadIDType& tid)
+    void main()
     {
-        SigConnectionID id = SignalBase::GetUniqueConnectionID();
-        connections.emplace(std::make_pair(id, ConnData(std::move(fn), obj, tid)));
+        // Signal with no arguments and a void return value
+        DAVA::Signal<void ()> sig;
 
-        if (nullptr != obj)
-        {
-            obj->Track(this);
-        }
+        // Connect a HelloWorld slot
+        HelloWorld hello;
+        sig.Connect(&hello, &HelloWorld::foo);
 
-        return id;
+        // Call all of the slots
+        sig.Emit();
     }
-};
-
-} // namespace Sig11
+    \endcode
 
 
-template<typename... Args>
-class Signal final : public Sig11::SignalImpl<Sig11::DummyMutex, Sig11::DymmyThreadID, Args...>
+    ### Connecting Multiple Slots
+
+    Calling a single slot from a signal isn't very interesting, so we can make the Hello, World program more
+    interesting by splitting the work of printing "Hello, World!" into two completely separate slots.
+    The first slot will print "Hello" and the second slot will print ", World!".
+
+    \code
+    struct Hello
+    {
+        void foo() const { std::cout << "Hello\n"; }
+    };
+
+    struct World
+    {
+        void foo() const { std::cout << "World\n"; }
+    };
+
+    void main()
+    {
+        Hello hello;
+        World world;
+
+        // Signal with no arguments and a void return value
+        DAVA::Signal<void ()> sig;
+
+        sig.Connect(&hello, &Hello::foo);
+        sig.Connect(&world, &World::foo);
+
+        // Call all of the slots
+        sig.Emit();
+    }
+    \endcode
+
+    One should know, that each Connect(...) function returns an unique slot identifier - Token. It can be used
+    to control slot was that created by appropriate Connect() call. See "Disconnecting Slots" or "Blocking Slots" for
+    examples.
+
+
+    ### Ordering Slots
+
+    Slots are free to have side effects, and that can mean that some slots will have to be called before others
+    even if they are not connected in that order. The DAVA::Signal allows slots to be placed into groups that are
+    ordered in some way. For our Hello, World program, we want "Hello" to be printed before ", World!", 
+    so we put "Hello" into a group that must be executed before the group that ", World!" is in. 
+    To do this, we can supply an extra parameter to the end of the connect call that specifies the group. 
+    Group value is one of the following three values: Signal::Group::High, Signal::Group::Medium, Signal::Group::Low.
+
+    Here's how we construct Hello, World:
+    \code
+    void main()
+    {
+        ...
+        
+        DAVA::Signal<void ()> sig;
+
+        sig.Connect(&world, &World::foo, Signal::Group::Low);
+        sig.Connect(&hello, &Hello::foo, Signal::Group::High);
+
+        // slots are invoked this order:
+        // 1) slots from group Signal::Group::High
+        // 2) slots from group Signal::Group::Medium
+        // 3) slots from group Signal::Group::Low
+        }
+    \endcode
+
+    Invoking the signal will correctly print "Hello World", because the `Hello::foo` method is in group Signal::Group::High, 
+    which precedes group Signal::Group::Low where the `World::foo` method resides. The `group` parameter is optional,
+    Signal::Group::Medium will be used by default. 
+
+    ### Disconnecting Slots
+
+    Slots aren't expected to exist indefinitely after they are connected. Often slots are only used to receive a few events
+    and are then disconnected, and the programmer needs control to decide when a slot should no longer be connected.
+
+    \code
+    void main()
+    {
+        Hello hello;
+        World world;
+
+        // Signal with no arguments and a void return value
+        DAVA::Signal<void ()> sig;
+
+        sig.Connect(hello, &Hello::foo);
+
+        sig.Connect(world, &World::foo);
+
+        // connect to global function `void goo()`
+        Token gooToken = sig.Connect(&goo);
+
+        // Call all of the slots - Hello::foo, World::foo and goo
+        sig.Emit();
+
+        // disconnect all slots that were connected with &hello object
+        sig.Disconnect(&hello);
+
+        // Disconnect slot, that is identified by `token`
+        sig.Disconnect(gooToken);
+
+        // Call all of the remaining slots - World::foo
+        sig.Emit();
+
+        // Disconnect all connected slots
+        sig.DisconnectAll();
+    }
+    \endcode
+
+
+    ### Blocking Slots
+
+    Slots can be temporarily "blocked", meaning that they will be ignored when the signal is emited but has not
+    been permanently disconnected. This is typically used to prevent infinite recursion in cases where otherwise
+    running a slot would cause the signal it is connected to be invoked again. 
+    Here is an example of blocking/unblocking slots:
+
+    \code
+    void main()
+    {
+        sig.Connect(&hello, &Hello::foo);
+        sig.Connect(&world, &World::foo);
+        sig.Emit(); // Prints "Hello" and "World"
+
+        sig.Block(&hello, true);
+        sig.Emit(); // Prints "World"
+
+        sig.Block(&hello, false);
+        sig.Emit(); // Prints "Hello" and "World"
+    }
+    \endcode
+
+
+    ### Automatic Connection Management
+
+    Signals can automatically track the lifetime of objects involved in signal/slot connections, including automatic
+    disconnection of slots when objects involved in the slot call are destroyed. Let's consider a typical example
+    when thing go wrong:
+    
+    \code
+    struct Hello
+    { ... };
+
+    void main()
+    {
+        Hello *hello = new Hello();
+        sig.Connect(hello, &Hello::foo);
+
+        sig.Emit(); // OK
+        delete hello;
+        sig.Emit(); // <-- segmentation fault, `sig` don't know that `hello` object was destroyed
+    }
+    \endcode 
+
+    However, there is an easy way to avoid such issues. With Signal one may track any object which is 
+    inherited from special class - TrackedObject. A slot will automatically disconnect when any of its
+    tracked objects expire.
+
+    \code
+    struct Hello : public TrackedObject
+    { ... };
+    \endcode
+
+    \code
+    sig.Emit(); // OK, Prints "Hello"
+    delete hello;   // automatically disconnect from all signals
+    sig.Emit(); // OK, Prints nothing 
+    \endcode
+
+    Also one may use TrackedObject that isn't part of the slot.
+
+    \code
+    void main()
+    {
+        World world; // isn't derived from TrackedObject
+
+        TrackedObject* to = new TrackedObject();
+
+        sig.Connect(to, [](){ std::cout << "Lambda"; });
+        sig.Connect(&world, &World::foo).Track(to);
+
+        sig.Emit(); // Prints "Lambda World"
+
+        delete to; // All connection tracked by `to` disconnect
+
+        sig.Emit(); // OK, Prints nothing 
+    }
+    \endcode
+*/
+template <typename... Args>
+class Signal final : protected SignalBase
 {
 public:
-    using Base = Sig11::SignalImpl<Sig11::DummyMutex, Sig11::DymmyThreadID, Args...>;
-    
-    Signal() = default;
-    Signal(const Signal &) = delete;
-    Signal& operator=(const Signal &) = delete;
+    Signal();
+    Signal(const Signal&) = delete;
+    Signal& operator=(const Signal&) = delete;
+    ~Signal();
 
-    void Emit(Args... args) override
+    enum class Group
     {
-        for (auto&& con : Base::connections)
-        {
-            if (!con.second.blocked)
-            {
-                con.second.fn(std::forward<Args>(args)...);
-            }
-        }
-    }
-};
+        High,
+        Medium,
+        Low
 
-#ifdef ENABLE_MULTITHREADED_SIGNALS
+        // Warning!!!
+        // If more groups should be added implementation of Signal::AddSlot()
+        // have to be reviewed and changed!
+    };
 
-template<typename... Args>
-class SignalMt final : public Sig11::SignalImpl<Mutex, Thread::Id, Args...> 
-{
-    using Base = Sig11::SignalImpl<Mutex, Thread::Id, Args...>;
+    /** 
+        Connect this signal to the incoming object `obj` and callback function `fn` - the slot. 
+        If `obj` points to TrackedObject than connection will be managed - it will be automatically
+        disconnected if this signal or object `obj` is destroyed. Optional parameter `group` can be
+        used to associate slot with the given group (see Emit() for more info about groups).
 
-    SignalMt() = default;
-    SignalMt(const SignalMt&) = delete;
-    SignalMt& operator=(const SignalMt&) = delete;
+        Incoming `obj` is not a part of the callback. It is only used to link connection
+        with specified object to be able to track connection lifetime or disconnect from this
+        signal with Signal::Disconnect(void* obj) method.
 
-    void Emit(Args... args) override
+        Return a Token that identify the newly-created connection to the specified slot `fn`.
+    */
+    template <typename Obj, typename Fn>
+    Token Connect(Obj* obj, const Fn& fn, Group group = Group::Medium);
+
+    /**
+        Connect this signal to the incoming object `obj` and callback function `fn` - the slot.
+        If `obj` points to TrackedObject than connection will be managed - it will be automatically
+        disconnected if this signal or object `obj` is destroyed. Optional parameter `group` can be
+        used to associate slot with the given group (see Emit() for more info about groups).
+
+        Return a Token that identify the newly-created connection to the specified slot `fn`.
+    */
+    template <typename Obj, typename Cls>
+    Token Connect(Obj* obj, void (Cls::*const& fn)(Args...), Group group = Group::Medium);
+
+    /**
+        Connect this signal to the incoming object `obj` and callback function `fn` - the slot.
+        If `obj` points to TrackedObject than connection will be managed - it will be automatically
+        disconnected if this signal or object `obj` is destroyed. Optional parameter `group` can be
+        used to associate slot with the given group (see Emit() for more info about groups).
+
+        Return a Token that identify the newly-created connection to the specified slot `fn`.
+    */
+    template <typename Obj, typename Cls>
+    Token Connect(Obj* obj, void (Cls::*const& fn)(Args...) const, Group group = Group::Medium);
+
+    /**
+        Connects this signal to the incoming callback function `fn` - the slot. Optional parameter `group`
+        can be used to associate slot with the given group (see Emit() for more info about groups).
+
+        The connection isn't linked to any object (it is detached) so the only way to break this
+        connection is to call Signal::Disconnect(Token) method, passing returned token into it.
+
+        Return a Token that identify the newly-created connection to the specified slot `fn`.
+    */
+    template <typename Fn>
+    Token Connect(const Fn& fn, Group group = Group::Medium);
+
+    /** Disconnects any slot that is linked to the specified object `obj`. */
+    void Disconnect(void* obj);
+
+    /** Disconnects slot with specified connection token `token`. */
+    void Disconnect(Token token) override;
+
+    /** Disconnects all slots connected to the signal. */
+    void DisconnectAll();
+
+    /** 
+        Make connection with specified token `token` managed by specified TrackedObject `trackedObject`.
+        Such connection will be automatically disconnected if this signal or specified `trackedObject` is destroyed.
+    */
+    void Track(Token token, TrackedObject* trackedObject) override;
+
+    /**
+        Sets connection slot with specified token `token` to be temporarily "blocked".
+        Blocked slot means that it will be ignored when the signal is emitted but has not been permanently
+        disconnected. This is typically used to prevent infinite recursion in cases where otherwise running
+        a slot would cause the signal it is connected to be invoked again.
+
+        By default every newly created connection is unblocked.
+    */
+    void Block(Token token, bool block);
+
+    /**
+        Sets every connection that is linked with specified object `obj` to be temporarily "blocked".
+        Blocked slot means that it will be ignored when the signal is emitted but has not been permanently
+        disconnected. This is typically used to prevent infinite recursion in cases where otherwise running
+        a slot would cause the signal it is connected to be invoked again.
+
+        By default every newly created connection is unblocked.
+    */
+    void Block(void* obj, bool block);
+
+    /* Checks if connection with specified token `token` in temporarily "blocked". */
+    bool IsBlocked(Token token) const;
+
+    /**
+        Invokes the sequence of calls to the slots connected to signal *this. Every slot will be invoked
+        with the given set of parameters `args...`. 
+
+        The order of invocation depends on slot connection group:
+        1. Signal::Group::High, while order within the group is not defined
+        2. Signal::Group::Medium, while order within the group corresponds to the connection order
+        3. Signal::Group::Low, while order within the group corresponds to the connection order
+
+        This method will skip slots, that are blocked with Signal::Block() method.
+    */
+    void Emit(Args... args);
+
+private:
+    using ConnectionFn = Function<void(Args...)>;
+
+    /** Internal structure that contains info about connected slot */
+    struct Connection
     {
-        Thread::Id thisTid = Thread::GetCurrentId();
+        void* object; //< object that is used with Connect(...) call
+        Token token; //< connection unique token
+        TrackedObject* tracked; //< TrackedObject, that is try-casted from `object`
+        ConnectionFn fn; //< slot function
 
-        LockGuard<Mutex> guard(Base::mutex);
-        for (auto&& con : Base::connections)
+        std::bitset<3> flags;
+
+        enum Flags
         {
-            if (!con.second.blocked)
-            {
-                if (con.second.tid == thisTid)
-                {
-                    con.second.fn(std::move(args)...);
-                }
-                else
-                {
-                    Function<void()> fn = Bind(con.second.fn, std::forward<Args>(args)...);
+            Emiting,
+            Blocked,
+            Deleted
+        };
+    };
 
-                    // TODO:
-                    // add implementation
-                    // new to send fn variable directly into thread with given id = con.second.tid
-                    // ...
-                }
-            }
-        }
-    }
+    using ConnectionIt = typename List<Connection>::iterator;
+
+    List<Connection> connections;
+    ConnectionIt connectionsMediumPos;
+
+    void AddSlot(Connection&& slot, Group group);
+    ConnectionIt RemoveSlot(ConnectionIt& it);
+
+    void OnTrackedObjectDestroyed(TrackedObject* object) override;
 };
-
-#endif
-
 
 } // namespace DAVA
 
-#endif // __DAVA_SIGNAL_H__
+#define __DAVA_Signal__
+#include "Functional/Private/Signal_impl.h"

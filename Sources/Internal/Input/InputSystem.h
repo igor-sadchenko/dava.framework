@@ -1,34 +1,101 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
+#pragma once
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
+#include "Base/BaseTypes.h"
 
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
+#if defined(__DAVAENGINE_COREV2__)
 
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
+#include "Base/RefPtr.h"
+#include "Engine/EngineTypes.h"
+#include "Functional/Function.h"
 
+namespace DAVA
+{
+/**
+    \defgroup input Input System
+*/
 
-#ifndef __DAVAENGINE_INPUT_SYSTEM_H__
-#define __DAVAENGINE_INPUT_SYSTEM_H__
+class Engine;
+class UIEvent;
+class KeyboardDevice;
+class GamepadDevice;
+namespace Private
+{
+class EngineBackend;
+struct MainDispatcherEvent;
+}
+
+class InputSystem final
+{
+    friend class Window;
+    friend class Private::EngineBackend;
+    friend class GamepadDevice;
+
+public:
+    // Temporal method for backward compatibility
+    // TODO: remove InputSystem::Instance() method
+    static InputSystem* Instance();
+
+    uint32 AddHandler(eInputDevices inputDeviceMask, const Function<bool(UIEvent*)>& callback);
+    void ChangeHandlerDeviceMask(uint32 token, eInputDevices newInputDeviceMask);
+    void RemoveHandler(uint32 token);
+
+    KeyboardDevice& GetKeyboard();
+    GamepadDevice& GetGamepadDevice();
+
+private:
+    InputSystem(Engine* engine);
+    ~InputSystem();
+
+    InputSystem(const InputSystem&) = delete;
+    InputSystem& operator=(const InputSystem&) = delete;
+
+    void Update(float32 frameDelta);
+    void OnAfterUpdate();
+    void HandleInputEvent(UIEvent* uie);
+    void HandleGamepadMotion(const Private::MainDispatcherEvent& e);
+    void HandleGamepadButton(const Private::MainDispatcherEvent& e);
+
+    void HandleGamepadAdded(const Private::MainDispatcherEvent& e);
+    void HandleGamepadRemoved(const Private::MainDispatcherEvent& e);
+
+private:
+    RefPtr<KeyboardDevice> keyboard;
+    RefPtr<GamepadDevice> gamepad;
+
+    struct InputHandler
+    {
+        InputHandler(uint32 token_, eInputDevices inputDeviceMask_, const Function<bool(UIEvent*)>& callback_);
+
+        uint32 token;
+        eInputDevices inputDeviceMask;
+        Function<bool(UIEvent*)> callback;
+    };
+
+    Vector<InputHandler> handlers;
+    uint32 nextHandlerToken = 1;
+    bool pendingHandlerRemoval = false;
+};
+
+inline InputSystem::InputHandler::InputHandler(uint32 token_, eInputDevices inputDeviceMask_, const Function<bool(UIEvent*)>& callback_)
+    : token(token_)
+    , inputDeviceMask(inputDeviceMask_)
+    , callback(callback_)
+{
+}
+
+inline KeyboardDevice& InputSystem::GetKeyboard()
+{
+    return *keyboard;
+}
+
+inline GamepadDevice& InputSystem::GetGamepadDevice()
+{
+    return *gamepad;
+}
+
+} // namespace DAVA
+
+#else // __DAVAENGINE_COREV2__
 
 #include "Base/BaseTypes.h"
 #include "Base/BaseMath.h"
@@ -36,97 +103,91 @@
 #include "Core/Core.h"
 #include "UI/UIEvent.h"
 #include "InputCallback.h"
-//#include "UI/UIControl.h"
-//#include "UI/UIScreenTransition.h"
-//#include "UI/UILoadingTransition.h"
-//#include "UI/UIPopup.h"
+#include "Input/MouseDevice.h"
 
 /**
 	\defgroup inputsystem	Input System
 */
 namespace DAVA
 {
-
 class KeyboardDevice;
 class GamepadDevice;
 
 class InputSystem : public Singleton<InputSystem>
 {
 public:
-	enum eInputDevice
-	{
-		INPUT_DEVICE_TOUCH		= 1,
-		INPUT_DEVICE_KEYBOARD	= 1 << 1,
-		INPUT_DEVICE_JOYSTICK	= 1 << 2
-	};
-
-    enum class eMouseCaptureMode
+    enum eInputDevice
     {
-        OFF = 0, //!< Disable any capturing (send absolute xy)
-        FRAME, //!< Capture system cursor into window rect (send absolute xy)
-        PINING //!<< Capture system cursor on current position (send xy move delta)
+        INPUT_DEVICE_TOUCH = 1,
+        INPUT_DEVICE_KEYBOARD = 1 << 1,
+        INPUT_DEVICE_JOYSTICK = 1 << 2
     };
 
+#if defined(__DAVAENGINE_COREV2__)
+    friend class Private::EngineBackend;
+#else
     friend void Core::CreateSingletons();
+#endif
 
 protected:
-	~InputSystem();
-	/**
+    ~InputSystem();
+    /**
 	 \brief Don't call this constructor!
 	 */
-	InputSystem();
-			
-public:
-    
-	void ProcessInputEvent(UIEvent * event);
+    InputSystem();
 
-	void AddInputCallback(const InputCallback& inputCallback);
-	bool RemoveInputCallback(const InputCallback& inputCallback);
-	void RemoveAllInputCallbacks();
-    
+public:
+    void ProcessInputEvent(UIEvent* event);
+
+    void AddInputCallback(const InputCallback& inputCallback);
+    bool RemoveInputCallback(const InputCallback& inputCallback);
+    void RemoveAllInputCallbacks();
+
     void OnBeforeUpdate();
     void OnAfterUpdate();
-    
-    inline KeyboardDevice & GetKeyboard();
-    inline GamepadDevice  & GetGamepadDevice();
 
-    eMouseCaptureMode GetMouseCaptureMode();
-    bool SetMouseCaptureMode(eMouseCaptureMode mode);
+    inline KeyboardDevice& GetKeyboard();
+    inline GamepadDevice& GetGamepadDevice();
+    inline MouseDevice& GetMouseDevice();
 
     inline void EnableMultitouch(bool enabled);
     inline bool GetMultitouchEnabled() const;
-    
+
 protected:
-    
-    KeyboardDevice *keyboard;
-    GamepadDevice *gamepad;
+    KeyboardDevice* keyboard;
+    GamepadDevice* gamepad;
+    MouseDevice* mouse;
 
     Vector<InputCallback> callbacks;
     bool pinCursor;
-    
+
     bool isMultitouchEnabled;
 };
 
-inline KeyboardDevice & InputSystem::GetKeyboard()
+inline KeyboardDevice& InputSystem::GetKeyboard()
 {
     return *keyboard;
 }
 
-inline GamepadDevice & InputSystem::GetGamepadDevice()
+inline GamepadDevice& InputSystem::GetGamepadDevice()
 {
     return *gamepad;
 }
 
+inline MouseDevice& InputSystem::GetMouseDevice()
+{
+    return *mouse;
+}
+
 inline void InputSystem::EnableMultitouch(bool enabled)
 {
-	isMultitouchEnabled = enabled;
+    isMultitouchEnabled = enabled;
 }
 
 inline bool InputSystem::GetMultitouchEnabled() const
 {
-	return isMultitouchEnabled;
+    return isMultitouchEnabled;
 }
-
 };
 
-#endif
+#endif // !__DAVAENGINE_COREV2__

@@ -1,39 +1,8 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __DAVAENGINE_H__
 #define __DAVAENGINE_H__
 
 #include "DAVAVersion.h"
 #include "DAVAConfig.h"
-#include "Base/Platform.h"
-#include "Debug/Stats.h"
 #include "MemoryManager/MemoryProfiler.h"
 
 #include "Base/BaseTypes.h"
@@ -44,10 +13,12 @@
 #include "DLC/Patcher/PatchFile.h"
 #include "DLC/Downloader/DownloadManager.h"
 
-#include "FileSystem/Logger.h"
-#include "Platform/SystemTimer.h"
-#include "Platform/DateTime.h"
+#include "Logger/Logger.h"
+
 #include "Platform/DeviceInfo.h"
+
+#include "Time/DateTime.h"
+#include "Time/SystemTimer.h"
 
 // system stuff
 #include "Utils/Utils.h"
@@ -105,7 +76,6 @@
 #include "FileSystem/Parser.h"
 #include "FileSystem/FilePath.h"
 
-
 // Collisions
 #include "Collision/Collisions.h"
 
@@ -117,7 +87,6 @@
 #include "Animation/LinearAnimation.h"
 #include "Animation/BezierSplineAnimation.h"
 
-
 // 2D Graphics
 #include "Render/2D/Sprite.h"
 #include "Render/GPUFamilyDescriptor.h"
@@ -127,7 +96,6 @@
 #include "Render/ShaderCache.h"
 #include "Core/DisplayMode.h"
 #include "Render/RenderHelper.h"
-#include "Render/Cursor.h"
 #include "Render/MipmapReplacer.h"
 #include "Render/2D/Systems/VirtualCoordinatesSystem.h"
 #include "Render/2D/Systems/RenderSystem2D.h"
@@ -151,6 +119,7 @@
 #include "UI/UIStaticText.h"
 #include "UI/UIControlBackground.h"
 #include "UI/UIScreen.h"
+#include "UI/UILoadingScreen.h"
 #include "UI/UIList.h"
 #include "UI/UIListCell.h"
 #include "UI/UITextField.h"
@@ -177,7 +146,6 @@
 #include "UI/UIScreenManager.h"
 
 #include "UI/TheoraPlayer.h"
-#include "UI/UIAggregatorControl.h"
 
 #include "UI/UIScrollViewContainer.h"
 #include "UI/UIControlHelpers.h"
@@ -198,7 +166,6 @@
 #include "Particles/Particle.h"
 
 // 3D core classes
-#include "Scene3D/SceneFile.h"
 #include "Scene3D/SceneFileV2.h"
 #include "Scene3D/SceneFile/SerializationContext.h"
 
@@ -215,7 +182,6 @@
 // 3D scene management
 #include "Scene3D/Scene.h"
 #include "Scene3D/Entity.h"
-#include "Scene3D/MeshInstanceNode.h"
 #include "Render/Highlevel/RenderPass.h"
 #include "Render/Highlevel/RenderPassNames.h"
 #include "Render/Highlevel/Landscape.h"
@@ -226,25 +192,18 @@
 #include "Render/Highlevel/SpriteObject.h"
 #include "Render/Highlevel/RenderObject.h"
 #include "Render/Highlevel/SpeedTreeObject.h"
+#include "Render/Highlevel/BillboardRenderObject.h"
 #include "Render/Highlevel/Vegetation/VegetationRenderObject.h"
 
 #include "Scene3D/AnimationData.h"
-#include "Scene3D/ShadowVolumeNode.h"
-#include "Scene3D/LodNode.h"
-#include "Scene3D/ParticleEmitterNode.h"
-#include "Scene3D/ParticleEffectNode.h"
-#include "Scene3D/SwitchNode.h"
-#include "Scene3D/UserNode.h"
-#include "Scene3D/Systems/LodSystem.h"
 #include "Scene3D/Systems/EventSystem.h"
-#include "Scene3D/BillboardNode.h"
-#include "Scene3D/BoneNode.h"
-#include "Scene3D/SkeletonNode.h"
 #include "Scene3D/Systems/GlobalEventSystem.h"
 #include "Scene3D/Systems/SpeedTreeUpdateSystem.h"
 #include "Scene3D/Systems/QualitySettingsSystem.h"
 #include "Scene3D/Systems/FoliageSystem.h"
 #include "Scene3D/Systems/ParticleEffectSystem.h"
+#include "Scene3D/Lod/LodSystem.h"
+#include "Scene3D/Lod/LodComponent.h"
 
 //Components
 #include "Scene3D/Components/ComponentHelpers.h"
@@ -253,15 +212,14 @@
 #include "Scene3D/Components/CameraComponent.h"
 #include "Scene3D/Components/DebugRenderComponent.h"
 #include "Scene3D/Components/LightComponent.h"
-#include "Scene3D/Components/LodComponent.h"
 #include "Scene3D/Components/ParticleEffectComponent.h"
 #include "Scene3D/Components/RenderComponent.h"
 #include "Scene3D/Components/TransformComponent.h"
 #include "Scene3D/Components/UpdatableComponent.h"
 #include "Scene3D/Components/SwitchComponent.h"
 #include "Scene3D/Components/UserComponent.h"
-#include "Scene3D/Components/SoundComponent.h"
 #include "Scene3D/Components/ActionComponent.h"
+#include "Scene3D/Components/SoundComponent.h"
 #include "Scene3D/Components/StaticOcclusionComponent.h"
 #include "Scene3D/Components/QualitySettingsComponent.h"
 #include "Scene3D/Components/SpeedTreeComponent.h"
@@ -286,4 +244,3 @@
 #include "Notification/LocalNotificationController.h"
 
 #endif // __DAVAENGINE_H__
-

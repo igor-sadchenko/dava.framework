@@ -1,32 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __DAVAENGINE_NMATERIAL_H__
 #define __DAVAENGINE_NMATERIAL_H__
 
@@ -70,6 +41,22 @@ struct MaterialTextureInfo
     FilePath path;
 };
 
+struct MaterialConfig
+{
+    MaterialConfig();
+    ~MaterialConfig();
+    MaterialConfig& operator=(const MaterialConfig& config);
+    MaterialConfig(const MaterialConfig& config);
+
+    void Clear();
+
+    FastName name;
+    FastName fxName;
+    HashMap<FastName, NMaterialProperty*> localProperties;
+    HashMap<FastName, MaterialTextureInfo*> localTextures;
+    HashMap<FastName, int32> localFlags; // integer flags are just more generic than boolean (eg. #if SHADING == HIGH), it has nothing in common with eFlagValue
+};
+
 class RenderVariantInstance
 {
     friend class NMaterial;
@@ -78,8 +65,7 @@ class RenderVariantInstance
     rhi::HDepthStencilState depthState;
     rhi::HSamplerState samplerState;
     rhi::HTextureSet textureSet;
-    rhi::CullMode cullMode;
-    bool wireFrame = 0;
+    rhi::CullMode cullMode = rhi::CULL_CCW;
 
     Vector<rhi::HConstBuffer> vertexConstBuffers;
     Vector<rhi::HConstBuffer> fragmentConstBuffers;
@@ -87,8 +73,11 @@ class RenderVariantInstance
     Vector<MaterialBufferBinding*> materialBufferBindings;
 
     uint32 renderLayer = 0;
+    bool wireFrame = false;
+    bool alphablend = false;
+    bool alphatest = false;
 
-    RenderVariantInstance();
+    RenderVariantInstance() = default;
     RenderVariantInstance(const RenderVariantInstance&) = delete;
     ~RenderVariantInstance();
 };
@@ -138,6 +127,7 @@ public:
     uint32 GetLocalPropArraySize(const FastName& propName);
     const float32* GetLocalPropValue(const FastName& propName);
     const float32* GetEffectivePropValue(const FastName& propName);
+    const HashMap<FastName, NMaterialProperty*>& GetLocalProperties() const;
 
     // textures
     void AddTexture(const FastName& slotName, Texture* texture);
@@ -146,8 +136,11 @@ public:
     bool HasLocalTexture(const FastName& slotName);
     Texture* GetLocalTexture(const FastName& slotName);
     Texture* GetEffectiveTexture(const FastName& slotName);
+
     void CollectLocalTextures(Set<MaterialTextureInfo*>& collection) const;
+    void CollectActiveLocalTextures(Set<MaterialTextureInfo*>& collection) const;
     bool ContainsTexture(Texture* texture) const;
+    const HashMap<FastName, MaterialTextureInfo*>& GetLocalTextures() const;
 
     // flags
     void AddFlag(const FastName& flagName, int32 value);
@@ -160,11 +153,29 @@ public:
     int32 GetEffectiveFlagValue(const FastName& flagName);
 
     void SetParent(NMaterial* parent);
-    NMaterial* GetParent();
+    NMaterial* GetParent() const;
+    NMaterial* GetTopLevelParent();
     const Vector<NMaterial*>& GetChildren() const;
 
     inline uint32 GetRenderLayerID() const;
     inline uint32 GetSortingKey() const;
+
+    //Configs managment
+    uint32 GetConfigCount() const;
+    const MaterialConfig& GetConfig(uint32 index) const;
+    void InsertConfig(uint32 index, const MaterialConfig& config);
+    void RemoveConfig(uint32 index);
+
+    uint32 GetCurrentConfigIndex() const;
+    void SetCurrentConfigIndex(uint32 index);
+
+    const FastName& GetConfigName(uint32 index) const;
+    void SetConfigName(uint32 index, const FastName& name);
+    uint32 FindConfigByName(const FastName& name) const; //return size if config not found!
+    const FastName& GetCurrentConfigName() const;
+    void SetCurrentConfigName(const FastName& newName);
+
+    void ReleaseConfigTextures(uint32 index);
 
     void BindParams(rhi::Packet& target);
 
@@ -176,9 +187,20 @@ public:
     // RHI_COMPLETE - it's temporary solution to avoid FX loading and shaders compilation after loading
     void PreCacheFX();
     void PreCacheFXWithFlags(const HashMap<FastName, int32>& extraFlags, const FastName& extraFxName = FastName());
+    void PreCacheFXVariations(const Vector<FastName>& fxNames, const Vector<FastName>& flags);
+
+    static const float32 DEFAULT_LIGHTMAP_SIZE;
+
+    enum eUserFlag
+    {
+        USER_FLAG_ALPHABLEND = 1 << 0,
+        USER_FLAG_ALPHATEST = 1 << 1,
+    };
 
 private:
     void LoadOldNMaterial(KeyedArchive* archive, SerializationContext* serializationContext);
+    void SaveConfigToArchive(uint32 configId, KeyedArchive* archive, SerializationContext* serializationContext, bool forceNameSaving);
+    void LoadConfigFromArchive(uint32 configId, KeyedArchive* archive, SerializationContext* serializationContext);
 
     void RebuildBindings();
     void RebuildTextureBindings();
@@ -192,28 +214,29 @@ private:
     MaterialBufferBinding* GetConstBufferBinding(UniquePropertyLayout propertyLayout);
     NMaterialProperty* GetMaterialProperty(const FastName& propName);
     void CollectMaterialFlags(HashMap<FastName, int32>& target);
+    void CollectConfigTextures(const MaterialConfig& config, Set<MaterialTextureInfo*>& collection) const;
 
     void AddChildMaterial(NMaterial* material);
     void RemoveChildMaterial(NMaterial* material);
 
+    const MaterialConfig& GetCurrentConfig() const;
+    MaterialConfig& GetMutableCurrentConfig();
+    MaterialConfig& GetMutableConfig(uint32 index);
+
 private:
     // config time
     FastName materialName;
-    FastName fxName;
     FastName qualityGroup;
-    FastName activeVariantName;
 
-    HashMap<FastName, NMaterialProperty*> localProperties;
-    HashMap<FastName, MaterialTextureInfo*> localTextures;
-
-    // integer flags are just more generic than boolean (eg. #if SHADING == HIGH),
-    // it has nothing in common with eFlagValue bullshit from old NMaterial
-    HashMap<FastName, int32> localFlags;
+    Vector<MaterialConfig> materialConfigs;
 
     // runtime
     NMaterial* parent = nullptr;
     Vector<NMaterial*> children;
 
+    uint32 currentConfig = 0;
+
+    FastName activeVariantName;
     RenderVariantInstance* activeVariantInstance = nullptr;
 
     HashMap<UniquePropertyLayout, MaterialBufferBinding*> localConstBuffers;
@@ -229,11 +252,13 @@ private:
 public:
     INTROSPECTION_EXTEND(NMaterial, DataNode,
                          PROPERTY("materialName", "Material name", GetMaterialName, SetMaterialName, I_VIEW | I_EDIT)
+                         PROPERTY("configName", "Config name", GetCurrentConfigName, SetCurrentConfigName, I_VIEW | I_EDIT)
+                         PROPERTY("configId", "Current config", GetCurrentConfigIndex, SetCurrentConfigIndex, I_VIEW | I_EDIT)
                          PROPERTY("fxName", "FX Name", GetLocalFXName, SetFXName, I_VIEW | I_EDIT)
                          PROPERTY("qualityGroup", "Quality group", GetQualityGroup, SetQualityGroup, I_VIEW | I_EDIT)
                          DYNAMIC(localFlags, "Material flags", new NMaterialStateDynamicFlagsInsp(), I_EDIT | I_VIEW)
                          DYNAMIC(localProperties, "Material properties", new NMaterialStateDynamicPropertiesInsp(), I_EDIT | I_VIEW)
-                         DYNAMIC(localTextures, "Material textures", new NMaterialStateDynamicTexturesInsp(), I_EDIT | I_VIEW));
+                         DYNAMIC(localTextures, "Material textures", new NMaterialStateDynamicTexturesInsp(), I_EDIT | I_VIEW))
 };
 
 void NMaterialProperty::SetPropertyValue(const float32* newValue)
@@ -256,11 +281,38 @@ uint32 NMaterial::GetRenderLayerID() const
     if (activeVariantInstance)
         return activeVariantInstance->renderLayer;
     else
-        return (uint32)-1;
+        return static_cast<uint32>(-1);
 }
 uint32 NMaterial::GetSortingKey() const
 {
     return sortingKey;
+}
+
+inline uint32 NMaterial::GetCurrentConfigIndex() const
+{
+    return currentConfig;
+}
+
+inline const MaterialConfig& NMaterial::GetCurrentConfig() const
+{
+    return GetConfig(GetCurrentConfigIndex());
+}
+
+inline MaterialConfig& NMaterial::GetMutableCurrentConfig()
+{
+    return GetMutableConfig(GetCurrentConfigIndex());
+}
+
+inline const MaterialConfig& NMaterial::GetConfig(uint32 index) const
+{
+    DVASSERT(index < materialConfigs.size());
+    return materialConfigs[index];
+}
+
+inline MaterialConfig& NMaterial::GetMutableConfig(uint32 index)
+{
+    DVASSERT(index < materialConfigs.size());
+    return materialConfigs[index];
 }
 };
 

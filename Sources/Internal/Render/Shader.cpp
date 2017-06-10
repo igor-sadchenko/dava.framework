@@ -1,35 +1,7 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Render/Shader.h"
 #include "Render/RHI/rhi_ShaderCache.h"
 #include "Render/RenderBase.h"
+#include "Logger/Logger.h"
 
 namespace DAVA
 {
@@ -116,7 +88,7 @@ void ShaderDescriptor::UpdateDynamicParams()
     {
         if (dynamicBinding.buffer == rhi::InvalidHandle) //buffer is cut by compiler/linker!
             continue;
-        float32* data = (float32*)(Renderer::GetDynamicBindings().GetDynamicParam(dynamicBinding.dynamicPropertySemantic));
+        const float32* data = static_cast<const float32*>(Renderer::GetDynamicBindings().GetDynamicParam(dynamicBinding.dynamicPropertySemantic));
         pointer_size updateSemantic = Renderer::GetDynamicBindings().GetDynamicParamUpdateSemantic(dynamicBinding.dynamicPropertySemantic);
         if (dynamicBinding.updateSemantic != updateSemantic)
         {
@@ -189,10 +161,24 @@ void ShaderDescriptor::UpdateConfigFromSource(rhi::ShaderSource* vSource, rhi::S
 
     for (auto& prop : vSource->Properties())
     {
+        if (prop.bufferindex >= vertexConstBuffersCount)
+        {
+            Logger::Error("[UpdateConfigFromSource] Invalid vertex const-buffer index. Index: %u, Count: %u", prop.bufferindex, vertexConstBuffersCount);
+            Logger::Error("Shader source code:");
+            Logger::Error("%s", vSource->GetSourceCode(rhi::HostApi()).c_str());
+        }
+
         bufferPropertyLayouts[prop.bufferindex].props.push_back(prop);
     }
     for (auto& prop : fSource->Properties())
     {
+        if (prop.bufferindex >= fragmentConstBuffersCount)
+        {
+            Logger::Error("[UpdateConfigFromSource] Invalid fragment const-buffer index. Index: %u, Count: %u", prop.bufferindex, fragmentConstBuffersCount);
+            Logger::Error("Shader source code:");
+            Logger::Error("%s", fSource->GetSourceCode(rhi::HostApi()).c_str());
+        }
+
         bufferPropertyLayouts[prop.bufferindex + vertexConstBuffersCount].props.push_back(prop);
     }
     for (uint32 i = 0, sz = static_cast<uint32>(constBuffers.size()); i < sz; ++i)
@@ -201,13 +187,13 @@ void ShaderDescriptor::UpdateConfigFromSource(rhi::ShaderSource* vSource, rhi::S
         {
             constBuffers[i].type = ConstBufferDescriptor::Type::Vertex;
             constBuffers[i].targetSlot = i;
-            constBuffers[i].updateType = vSource->ConstBufferStorage(constBuffers[i].targetSlot);
+            constBuffers[i].updateType = vSource->ConstBufferSource(constBuffers[i].targetSlot);
         }
         else
         {
             constBuffers[i].type = ConstBufferDescriptor::Type::Fragment;
             constBuffers[i].targetSlot = i - vertexConstBuffersCount;
-            constBuffers[i].updateType = fSource->ConstBufferStorage(constBuffers[i].targetSlot);
+            constBuffers[i].updateType = fSource->ConstBufferSource(constBuffers[i].targetSlot);
         }
 
         constBuffers[i].propertyLayoutId = propertyLayoutSet.MakeUnique(bufferPropertyLayouts[i]);
@@ -215,7 +201,7 @@ void ShaderDescriptor::UpdateConfigFromSource(rhi::ShaderSource* vSource, rhi::S
 
     for (size_t i = 0, sz = constBuffers.size(); i < sz; ++i)
     {
-        if (constBuffers[i].updateType == rhi::ShaderProp::STORAGE_DYNAMIC)
+        if (constBuffers[i].updateType == rhi::ShaderProp::SOURCE_AUTO)
         {
             rhi::HConstBuffer dynamicBufferHandle;
             if (constBuffers[i].type == ConstBufferDescriptor::Type::Vertex)

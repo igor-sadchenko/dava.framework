@@ -1,32 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "GraphicFont.h"
 
 #include "Render/Texture.h"
@@ -34,7 +5,7 @@
 #include "FileSystem/YamlParser.h"
 #include "FileSystem/YamlNode.h"
 #include "Concurrency/LockGuard.h"
-#include "Render/2D/Systems/VirtualCoordinatesSystem.h"
+#include "UI/UIControlSystem.h"
 
 #define NOT_DEF_CHAR 0xffff
 
@@ -179,9 +150,9 @@ bool GraphicInternalFont::InitFromConfig(const DAVA::FilePath& path)
     if (distanceFieldFont)
         this->isDistanceFieldFont = distanceFieldFont->AsBool();
 
-    const MultiMap<String, YamlNode*> charsMap = charsNode->AsMap();
-    MultiMap<String, YamlNode*>::const_iterator charsMapEnd = charsMap.end();
-    for (MultiMap<String, YamlNode*>::const_iterator iter = charsMap.begin(); iter != charsMapEnd; ++iter)
+    const UnorderedMap<String, YamlNode*>& charsMap = charsNode->AsMap();
+    auto charsMapEnd = charsMap.end();
+    for (auto iter = charsMap.begin(); iter != charsMapEnd; ++iter)
     {
         char16 charId = atoi(iter->first.c_str());
         CharDescription charDescription;
@@ -201,7 +172,7 @@ bool GraphicInternalFont::InitFromConfig(const DAVA::FilePath& path)
     const YamlNode* kerningNode = configNode->Get("kerning");
     if (kerningNode)
     {
-        const MultiMap<String, YamlNode*> kerningMap = kerningNode->AsMap();
+        const UnorderedMap<String, YamlNode*>& kerningMap = kerningNode->AsMap();
         for (auto iter = kerningMap.begin(); iter != kerningMap.end(); ++iter)
         {
             int32 charId = atoi(iter->first.c_str());
@@ -209,7 +180,7 @@ bool GraphicInternalFont::InitFromConfig(const DAVA::FilePath& path)
             if (charIter == chars.end())
                 continue;
 
-            const MultiMap<String, YamlNode*> charKerningMap = iter->second->AsMap();
+            const UnorderedMap<String, YamlNode*>& charKerningMap = iter->second->AsMap();
             for (auto i = charKerningMap.begin(); i != charKerningMap.end(); ++i)
             {
                 int32 secondCharId = atoi(i->first.c_str());
@@ -256,6 +227,10 @@ GraphicFont* GraphicFont::Create(const FilePath& descriptorPath, const FilePath&
 
 Font::StringMetrics GraphicFont::GetStringMetrics(const WideString& str, Vector<float32>* charSizes /* = 0*/) const
 {
+    if (charSizes != nullptr)
+    {
+        charSizes->clear();
+    }
     int32 charDrawed = 0;
     return DrawStringToBuffer(str, 0, 0, nullptr, charDrawed, charSizes);
 }
@@ -268,7 +243,7 @@ bool GraphicFont::IsCharAvaliable(char16 ch) const
 
 uint32 GraphicFont::GetFontHeight() const
 {
-    return (uint32)((fontInternal->lineHeight) * GetSizeScale());
+    return uint32(fontInternal->lineHeight * GetSizeScale());
 }
 
 Font* GraphicFont::Clone() const
@@ -321,7 +296,7 @@ Font::StringMetrics GraphicFont::DrawStringToBuffer(const WideString& str,
     uint32 vertexAdded = 0;
     charDrawed = 0;
 
-    float32 lastX = (float32)xOffset;
+    float32 lastX = float32(xOffset);
     float32 lastY = 0;
     float32 sizeScale = GetSizeScale();
 
@@ -346,7 +321,7 @@ Font::StringMetrics GraphicFont::DrawStringToBuffer(const WideString& str,
             }
             else
             {
-                DVASSERT_MSG(false, "Font should contain .notDef character!");
+                DVASSERT(false, "Font should contain .notDef character!");
                 continue;
             }
         }
@@ -374,10 +349,10 @@ Font::StringMetrics GraphicFont::DrawStringToBuffer(const WideString& str,
         startHeight += yOffset;
         fullHeight += yOffset;
 
-        metrics.drawRect.x = Min(metrics.drawRect.x, (int32)startX);
-        metrics.drawRect.y = Min(metrics.drawRect.y, (int32)startHeight);
-        metrics.drawRect.dx = Max(metrics.drawRect.dx, (int32)(startX + width));
-        metrics.drawRect.dy = Max(metrics.drawRect.dy, (int32)(fullHeight));
+        metrics.drawRect.x = Min(metrics.drawRect.x, int32(startX));
+        metrics.drawRect.y = Min(metrics.drawRect.y, int32(startHeight));
+        metrics.drawRect.dx = Max(metrics.drawRect.dx, int32(startX + width));
+        metrics.drawRect.dy = Max(metrics.drawRect.dy, int32(fullHeight));
 
         //const float32 borderAlign = (startHeight - yOffset)*2.0f;
         //metrics.drawRect.dy = Max(metrics.drawRect.dy, (int32)(fullHeight + borderAlign));
@@ -421,23 +396,23 @@ Font::StringMetrics GraphicFont::DrawStringToBuffer(const WideString& str,
         }
         float32 charWidth = (charDescription.xAdvance + nextKerning) * sizeScale;
         if (charSizes)
-            charSizes->push_back(VirtualCoordinatesSystem::Instance()->ConvertVirtualToPhysicalX(charWidth));
+            charSizes->push_back(UIControlSystem::Instance()->vcs->ConvertVirtualToPhysicalX(charWidth));
         lastX += charWidth;
 
         charDrawed++;
     }
     lastY += yOffset + fontHeight;
 
-    metrics.drawRect.dy += (int32)(ascent);
+    metrics.drawRect.dy += int32(ascent);
 
     //@note : "-1" fix magic fix from FTFont
     // Transform right/bottom edges into width/height
     metrics.drawRect.dx += -metrics.drawRect.x + 1;
     metrics.drawRect.dy += -metrics.drawRect.y + 1;
 
-    metrics.height = (int32)ceilf(lastY);
-    metrics.width = (int32)ceilf(lastX);
-    metrics.baseline = yOffset + (int32)fontInternal->baselineHeight;
+    metrics.height = lastY;
+    metrics.width = lastX;
+    metrics.baseline = yOffset + fontInternal->baselineHeight;
     return metrics;
 }
 

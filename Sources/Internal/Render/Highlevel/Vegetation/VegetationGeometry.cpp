@@ -1,32 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include <cfloat>
 
 #include "Render/Material/NMaterial.h"
@@ -53,13 +24,11 @@ void VegetationGeometry::CustomGeometryLayerData::BuildBBox()
 }
 
 VegetationGeometry::CustomGeometryEntityData::CustomGeometryEntityData()
-    : material(NULL)
 {
 }
 
 VegetationGeometry::CustomGeometryEntityData::CustomGeometryEntityData(const CustomGeometryEntityData& src)
 {
-    material = NULL;
     SetMaterial(src.material);
 
     lods = src.lods;
@@ -82,12 +51,6 @@ void VegetationGeometry::CustomGeometryEntityData::SetMaterial(NMaterial* mat)
 int32 VegetationGeometry::RandomShuffleFunc(int32 limit)
 {
     return (Random::Instance()->Rand() % limit);
-}
-
-bool VegetationGeometry::PolygonByDistanceCompareFunction(const PolygonSortData& a,
-                                                          const PolygonSortData& b)
-{
-    return a.cameraDistance > b.cameraDistance; //back to front order
 }
 
 bool VegetationGeometry::ClusterByMatrixCompareFunction(const ClusterResolutionData& a,
@@ -168,11 +131,11 @@ void VegetationGeometry::Build(VegetationRenderData* renderData)
     Vector<VertexRangeData> layerClusterRanges;
     GenerateClusterPositionData(maxClusters, clusterPositions, layerClusterRanges);
 
-    Vector<Vector<Vector<SortBufferData>>> resolutionDataArray;
+    Vector<Vector<BufferData>> resolutionDataArray;
     for (uint32 resolutionIndex = 0; resolutionIndex < resolutionCount; ++resolutionIndex)
     {
-        resolutionDataArray.push_back(Vector<Vector<SortBufferData>>());
-        Vector<Vector<SortBufferData>>& cellDataArray = resolutionDataArray[resolutionDataArray.size() - 1];
+        resolutionDataArray.emplace_back();
+        Vector<BufferData>& cellDataArray = resolutionDataArray.back();
 
         Vector<ClusterResolutionData> clusterResolution;
         Vector<BufferCellData> cellOffsets;
@@ -185,41 +148,30 @@ void VegetationGeometry::Build(VegetationRenderData* renderData)
         size_t cellCount = cellOffsets.size();
         for (size_t cellIndex = 0; cellIndex < cellCount; ++cellIndex)
         {
-            cellDataArray.push_back(Vector<SortBufferData>());
-            Vector<SortBufferData>& directionOffsets = cellDataArray[cellDataArray.size() - 1];
-            GenerateIndexData(customGeometryData, clusterResolution, cellOffsets[cellIndex], vertexData, indexData, directionOffsets);
+            cellDataArray.emplace_back();
+            BufferData& bufferOffsets = cellDataArray.back();
+            GenerateIndexData(customGeometryData, clusterResolution, cellOffsets[cellIndex], vertexData, indexData, bufferOffsets);
         }
     }
 
-    Vector<Vector<Vector<VegetationSortedBufferItem>>>& indexBuffers = renderData->GetIndexBuffers();
+    Vector<Vector<VegetationBufferItem>>& indexBuffers = renderData->GetIndexBuffers();
     for (size_t resolutionIndex = 0; resolutionIndex < resolutionCount; ++resolutionIndex)
     {
-        Vector<Vector<SortBufferData>>& sortedIndexBuffers = resolutionDataArray[resolutionIndex];
+        Vector<BufferData>& indexBuffersOffsets = resolutionDataArray[resolutionIndex];
 
-        indexBuffers.push_back(Vector<Vector<VegetationSortedBufferItem>>());
-        Vector<Vector<VegetationSortedBufferItem>>& currentResolutionIndexBuffers = indexBuffers[indexBuffers.size() - 1];
+        indexBuffers.emplace_back();
+        Vector<VegetationBufferItem>& currentResolutionIndexBuffers = indexBuffers.back();
 
-        size_t cellCount = sortedIndexBuffers.size();
+        size_t cellCount = indexBuffersOffsets.size();
         for (size_t cellIndex = 0; cellIndex < cellCount; ++cellIndex)
         {
-            currentResolutionIndexBuffers.push_back(Vector<VegetationSortedBufferItem>());
-            Vector<VegetationSortedBufferItem>& sortedIndexBufferItems = currentResolutionIndexBuffers[currentResolutionIndexBuffers.size() - 1];
+            currentResolutionIndexBuffers.emplace_back();
+            VegetationBufferItem& indexBufferItem = currentResolutionIndexBuffers.back();
 
-            Vector<SortBufferData>& directionIndexBuffers = sortedIndexBuffers[cellIndex];
+            BufferData& indexBufferOffset = indexBuffersOffsets[cellIndex];
 
-            size_t directionCount = directionIndexBuffers.size();
-            for (size_t directionIndex = 0; directionIndex < directionCount; ++directionIndex)
-            {
-                SortBufferData& sortData = directionIndexBuffers[directionIndex];
-
-                sortedIndexBufferItems.push_back(VegetationSortedBufferItem());
-                VegetationSortedBufferItem& sortBufferItem = sortedIndexBufferItems[directionIndex];
-
-                sortBufferItem.startIndex = sortData.indexOffset;
-                sortBufferItem.indexCount = sortData.size;
-
-                sortBufferItem.sortDirection = sortData.sortDirection;
-            }
+            indexBufferItem.indexCount = indexBufferOffset.size;
+            indexBufferItem.startIndex = indexBufferOffset.indexOffset;
         }
     }
 
@@ -279,21 +231,11 @@ void VegetationGeometry::OnVegetationPropertiesChanged(NMaterial* mat, KeyedArch
         String heightmapKeyName = NMaterialTextureName::TEXTURE_HEIGHTMAP.c_str();
         if (props->IsKeyExists(heightmapKeyName))
         {
-            Texture* heightmap = (Texture*)props->GetUInt64(heightmapKeyName);
+            Texture* heightmap = reinterpret_cast<Texture*>(props->GetUInt64(heightmapKeyName));
             if (mat->HasLocalTexture(NMaterialTextureName::TEXTURE_HEIGHTMAP))
                 mat->SetTexture(NMaterialTextureName::TEXTURE_HEIGHTMAP, heightmap);
             else
                 mat->AddTexture(NMaterialTextureName::TEXTURE_HEIGHTMAP, heightmap);
-        }
-
-        String heightmapScaleKeyName = VegetationPropertyNames::UNIFORM_HEIGHTMAP_SCALE.c_str();
-        if (props->IsKeyExists(heightmapScaleKeyName))
-        {
-            Vector2 heightmapScale = props->GetVector2(heightmapScaleKeyName);
-            if (mat->HasLocalProperty(VegetationPropertyNames::UNIFORM_HEIGHTMAP_SCALE))
-                mat->SetPropertyValue(VegetationPropertyNames::UNIFORM_HEIGHTMAP_SCALE, heightmapScale.data);
-            else
-                mat->AddProperty(VegetationPropertyNames::UNIFORM_HEIGHTMAP_SCALE, heightmapScale.data, rhi::ShaderProp::TYPE_FLOAT2);
         }
     }
 }
@@ -344,8 +286,8 @@ void VegetationGeometry::GenerateClusterPositionData(const Vector<VegetationLaye
             uint32 matrixCellX = cellX / layerMaxClusters;
             uint32 matrixCellY = cellY / layerMaxClusters;
 
-            float32 randomX = unitSize.x * (float32)Random::Instance()->RandFloat();
-            float32 randomY = unitSize.y * (float32)Random::Instance()->RandFloat();
+            float32 randomX = unitSize.x * float32(Random::Instance()->RandFloat());
+            float32 randomY = unitSize.y * float32(Random::Instance()->RandFloat());
 
             clusters.push_back(ClusterPositionData());
             ClusterPositionData& cluster = clusters[clusters.size() - 1];
@@ -353,8 +295,8 @@ void VegetationGeometry::GenerateClusterPositionData(const Vector<VegetationLaye
             cluster.pos = Vector3((matrixCellX * unitSize.x) + randomX,
                                   (matrixCellY * unitSize.y) + randomY,
                                   0.0f);
-            cluster.rotation = layerParamsData.instanceRotationVariation * ((float32)Random::Instance()->RandFloat() - 0.5f);
-            cluster.scale = 1.0f - layerParamsData.instanceScaleVariation * (float32)Random::Instance()->RandFloat();
+            cluster.rotation = layerParamsData.instanceRotationVariation * (float32(Random::Instance()->RandFloat()) - 0.5f);
+            cluster.scale = 1.0f - layerParamsData.instanceScaleVariation * float32(Random::Instance()->RandFloat());
             cluster.densityId = densityId[clusterIndex];
             cluster.layerId = static_cast<uint32>(layerIndex);
 
@@ -477,8 +419,8 @@ void VegetationGeometry::GenerateVertexData(const Vector<CustomGeometryEntityDat
 
             //vertex.normal = transformedNormals[vertexIndex]; uncomment, when normals will be used for vertex lit implementation
 
-            vertex.texCoord1.x = (float32)clusterData.resolutionId;
-            vertex.texCoord1.y = (float32)clusterData.position.layerId;
+            vertex.texCoord1.x = float32(clusterData.resolutionId);
+            vertex.texCoord1.y = float32(clusterData.position.layerId);
             vertex.texCoord1.z = Max(0.0f, ((vertex.coord.z - clusterGeometry.pivot.z) / (clusterGeometry.bbox.max.z - clusterGeometry.pivot.z)));
 
             vertex.texCoord2.x = clusterData.position.pos.x + clusterGeometry.pivot.x;
@@ -545,7 +487,7 @@ void VegetationGeometry::Scale(const Vector3& clusterPivot, float32 scale, const
 }
 
 void VegetationGeometry::GenerateIndexData(const Vector<CustomGeometryEntityData>& sourceGeomData, const Vector<ClusterResolutionData>& clusterResolution, const BufferCellData& rangeData,
-                                           Vector<VegetationVertex>& vertexData, Vector<VegetationIndex>& indexData, Vector<SortBufferData>& directionOffsets)
+                                           Vector<VegetationVertex>& vertexData, Vector<VegetationIndex>& indexData, BufferData& bufferOffset)
 {
     uint32 lastClusterIndex = rangeData.clusterStartIndex + rangeData.clusterCount;
     uint32 vertexIndexOffset = 0;
@@ -560,77 +502,22 @@ void VegetationGeometry::GenerateIndexData(const Vector<CustomGeometryEntityData
         for (size_t i = 0; i < clusterIndexCount; ++i)
         {
             uint32 index = rangeData.vertexStartIndex + vertexIndexOffset + layerGeometry.sourceIndices[i];
-
-            sourceCellIndices.push_back((VegetationIndex)index);
+            sourceCellIndices.push_back(VegetationIndex(index));
         }
 
         vertexIndexOffset += static_cast<uint32>(layerGeometry.sourcePositions.size());
     }
 
-    AABBox3 boundingBox;
-    Vector<PolygonSortData> sortDataArray;
-    size_t sortItemCount = sourceCellIndices.size() / 3;
-    for (size_t sortItemIndex = 0; sortItemIndex < sortItemCount; ++sortItemIndex)
+    bufferOffset.indexOffset = static_cast<uint32>(indexData.size());
+    bufferOffset.size = static_cast<uint32>(sourceCellIndices.size());
+
+    size_t cellItemCount = sourceCellIndices.size() / 3;
+    for (size_t cellItemIndex = 0; cellItemIndex < cellItemCount; ++cellItemIndex)
     {
-        sortDataArray.push_back(PolygonSortData());
-        PolygonSortData& sortData = sortDataArray[sortDataArray.size() - 1];
-
-        sortData.indices[0] = sourceCellIndices[sortItemIndex * 3 + 0];
-
-        sortData.indices[1] = sourceCellIndices[sortItemIndex * 3 + 1];
-
-        sortData.indices[2] = sourceCellIndices[sortItemIndex * 3 + 2];
-
-        boundingBox.AddPoint(vertexData[sortData.indices[0]].coord);
-        boundingBox.AddPoint(vertexData[sortData.indices[1]].coord);
-        boundingBox.AddPoint(vertexData[sortData.indices[2]].coord);
+        indexData.push_back(sourceCellIndices[cellItemIndex * 3 + 0]);
+        indexData.push_back(sourceCellIndices[cellItemIndex * 3 + 1]);
+        indexData.push_back(sourceCellIndices[cellItemIndex * 3 + 2]);
     }
-
-    Vector<Vector3> cameraPositions;
-    SetupCameraPositions(boundingBox, cameraPositions);
-    size_t cameraPositionCount = cameraPositions.size();
-
-    for (uint32 cameraPositionIndex = 0; cameraPositionIndex < cameraPositionCount; ++cameraPositionIndex)
-    {
-        GenerateSortedClusterIndexData(cameraPositions[cameraPositionIndex], sortDataArray, vertexData);
-
-        SortBufferData bufferData;
-        bufferData.sortDirection = boundingBox.GetCenter() - cameraPositions[cameraPositionIndex];
-        bufferData.indexOffset = static_cast<uint32>(indexData.size());
-        bufferData.size = static_cast<uint32>(sortItemCount * 3);
-
-        directionOffsets.push_back(bufferData);
-
-        for (size_t sortItemIndex = 0; sortItemIndex < sortItemCount; ++sortItemIndex)
-        {
-            PolygonSortData& sortData = sortDataArray[sortItemIndex];
-
-            indexData.push_back(sortData.indices[0]);
-            indexData.push_back(sortData.indices[1]);
-            indexData.push_back(sortData.indices[2]);
-        }
-    }
-}
-
-void VegetationGeometry::GenerateSortedClusterIndexData(Vector3& cameraPosition, Vector<PolygonSortData>& sourceIndices, Vector<VegetationVertex>& vertexData)
-{
-    size_t sortedIndicesCount = sourceIndices.size();
-    for (size_t sortItemIndex = 0; sortItemIndex < sortedIndicesCount; ++sortItemIndex)
-    {
-        PolygonSortData& sortData = sourceIndices[sortItemIndex];
-        sortData.cameraDistance = FLT_MAX;
-
-        for (uint32 polygonIndex = 0; polygonIndex < 3; ++polygonIndex)
-        {
-            float32 distance = (vertexData[sortData.indices[polygonIndex]].coord - cameraPosition).SquareLength();
-            if (distance < sortData.cameraDistance)
-            {
-                sortData.cameraDistance = distance;
-            }
-        }
-    }
-
-    std::stable_sort(sourceIndices.begin(), sourceIndices.end(), PolygonByDistanceCompareFunction);
 }
 
 void VegetationGeometry::InitCustomGeometry(const VegetationGeometryDataPtr& geometryData)
@@ -657,9 +544,7 @@ void VegetationGeometry::InitCustomGeometry(const VegetationGeometryDataPtr& geo
             Vector<Vector3>& srcPositions = geometryData->GetPositions(layerIndex, lodIndex);
             Vector<Vector2>& srcTexCoords = geometryData->GetTextureCoords(layerIndex, lodIndex);
             Vector<Vector3>& srcNormals = geometryData->GetNormals(layerIndex, lodIndex);
-            ;
             Vector<VegetationIndex>& srcIndices = geometryData->GetIndices(layerIndex, lodIndex);
-            ;
 
             size_t posCount = srcPositions.size();
             for (size_t posIndex = 0; posIndex < posCount; ++posIndex)

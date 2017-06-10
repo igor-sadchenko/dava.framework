@@ -1,31 +1,3 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
 #if !defined __RHI_PROGGLES2_HPP__
 #define __RHI_PROGGLES2_HPP__
 
@@ -64,11 +36,13 @@ public:
         };
 
         ConstBuf()
-            : location(-1)
+            : glProg(0)
+            , location(-1)
             , count(0)
             , data(nullptr)
             , inst(nullptr)
             , lastInst(nullptr)
+            , frame(static_cast<uint32>(CurFrame - 1))
         {
         }
         ~ConstBuf()
@@ -85,14 +59,15 @@ public:
 
         const void* Instance() const;
         void SetToRHI(uint32 progUid, const void* instData) const;
-        void InvalidateInstance();
 
         static void AdvanceFrame();
 
     private:
+        void ReallocIfneeded();
+
         uint32 glProg;
         uint16 location;
-        #if DV_USE_UNIFORMBUFFER_OBJECT
+        #if RHI_GL__USE_UNIFORMBUFFER_OBJECT
         unsigned ubo;
         #endif
 
@@ -102,6 +77,20 @@ public:
         mutable void** lastInst;
         mutable uint32 frame;
 
+        #if RHI_GL__USE_STATIC_CONST_BUFFER_OPTIMIZATION
+        mutable uint32 isStatic : 1;
+        mutable uint32 isUsedInDrawCall : 1;
+        mutable uint32 lastmodifiedFrame;
+        mutable std::vector<float*> altData;
+        mutable std::vector<uint32> altDataAllocationFrame;
+        #endif
+
+        #if RHI_GL__DEBUG_CONST_BUFFERS
+        mutable uint32 isTrueStatic : 1;
+        mutable uint32 instCount;
+        #endif
+
+        friend class ProgGLES2;
         static uint32 CurFrame;
     };
 
@@ -115,13 +104,13 @@ private:
 
     ConstBufInfo cbuf[MAX_CONST_BUFFER_COUNT];
     void* cbufLastBoundData[MAX_CONST_BUFFER_COUNT];
-    unsigned texunitLoc[16];
+    unsigned texunitLoc[16]; //-V730_NOINIT
 
     unsigned shader;
     uint32 prog;
     const ProgType type;
-    mutable unsigned texunitInited : 1;
     unsigned texunitCount;
+    mutable unsigned texunitInited : 1;
 };
 
 //==============================================================================

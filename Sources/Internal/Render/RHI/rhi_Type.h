@@ -1,37 +1,9 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __RHI_TYPE_H__
 #define __RHI_TYPE_H__
 
 #include "Base/BaseTypes.h"
 #include "Base/FastName.h"
+#include "Math/Math2D.h"
 
 namespace DAVA
 {
@@ -50,13 +22,15 @@ using DAVA::Size2i;
 
 typedef uint32 Handle;
 static const uint32 InvalidHandle = 0;
-static const uint32 DefaultDepthBuffer = (uint32)(-2);
+static const uint32 DefaultDepthBuffer = static_cast<uint32>(-2);
+static const uint64 NonreliableQueryValue = uint64(-1);
 
 enum ResourceType
 {
     RESOURCE_VERTEX_BUFFER = 11,
     RESOURCE_INDEX_BUFFER = 12,
     RESOURCE_QUERY_BUFFER = 13,
+    RESOURCE_PERFQUERY = 14,
     RESOURCE_CONST_BUFFER = 22,
     RESOURCE_TEXTURE = 31,
 
@@ -75,10 +49,21 @@ enum ResourceType
 
 enum Api
 {
-    RHI_DX11,
+    RHI_DX11 = 0,
     RHI_DX9,
     RHI_GLES2,
-    RHI_METAL
+    RHI_METAL,
+    RHI_NULL_RENDERER,
+
+    RHI_API_COUNT
+};
+
+enum class RenderingError : uint32_t
+{
+    FailedToCreateDevice,
+    DriverError,
+    UnsupportedShaderModel,
+    FailedToInitialize
 };
 
 enum ProgType
@@ -103,11 +88,34 @@ enum FillMode
 enum
 {
     MAX_CONST_BUFFER_COUNT = 8,
-    MAX_RENDER_TARGET_COUNT = 2,
+    MAX_RENDER_TARGET_COUNT = 4,
     MAX_FRAGMENT_TEXTURE_SAMPLER_COUNT = 8,
     MAX_VERTEX_TEXTURE_SAMPLER_COUNT = 2,
-    MAX_VERTEX_STREAM_COUNT = 4
+    MAX_VERTEX_STREAM_COUNT = 4,
+    MAX_SHADER_PROPERTY_COUNT = 1024,
+    MAX_SHADER_CONST_BUFFER_COUNT = 1024,
 };
+
+//------------------------------------------------------------------------------
+enum class AntialiasingType : DAVA::uint32
+{
+    NONE,
+    MSAA_2X,
+    MSAA_4X,
+};
+
+inline DAVA::uint32 TextureSampleCountForAAType(AntialiasingType type)
+{
+    switch (type)
+    {
+    case AntialiasingType::MSAA_2X:
+        return 2;
+    case AntialiasingType::MSAA_4X:
+        return 4;
+    default:
+        return 1;
+    }
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // vertex-pipeline
@@ -197,34 +205,48 @@ VertexDataTypeName(VertexDataType t)
     }
 }
 
-class
-VertexLayout
+//------------------------------------------------------------------------------
+
+enum VertexDataFrequency
+{
+    VDF_PER_VERTEX = 1,
+    VDF_PER_INSTANCE = 2
+};
+
+//------------------------------------------------------------------------------
+
+class VertexLayout
 {
 public:
     VertexLayout();
     ~VertexLayout();
 
-    unsigned Stride() const;
-    unsigned ElementCount() const;
-    VertexSemantics ElementSemantics(unsigned elem_i) const;
-    unsigned ElementSemanticsIndex(unsigned elem_i) const;
-    VertexDataType ElementDataType(unsigned elem_i) const;
-    unsigned ElementDataCount(unsigned elem_i) const;
-    unsigned ElementOffset(unsigned elem_i) const;
-    unsigned ElementSize(unsigned elem_i) const;
+    uint32 Stride(uint32 stream_i = 0) const;
+    uint32 StreamCount() const;
+    VertexDataFrequency StreamFrequency(uint32 stream_i) const;
+    uint32 ElementCount() const;
+
+    uint32 ElementStreamIndex(uint32 elem_i) const;
+    VertexSemantics ElementSemantics(uint32 elem_i) const;
+    uint32 ElementSemanticsIndex(uint32 elem_i) const;
+    VertexDataType ElementDataType(uint32 elem_i) const;
+    uint32 ElementDataCount(uint32 elem_i) const;
+    uint32 ElementOffset(uint32 elem_i) const;
+    uint32 ElementSize(uint32 elem_i) const;
 
     bool operator==(const VertexLayout& vl) const;
     VertexLayout& operator=(const VertexLayout& src);
 
     void Clear();
-    void AddElement(VertexSemantics usage, unsigned usage_i, VertexDataType type, unsigned dimension);
-    void InsertElement(unsigned pos, VertexSemantics usage, unsigned usage_i, VertexDataType type, unsigned dimension);
+    void AddStream(VertexDataFrequency freq = VDF_PER_VERTEX);
+    void AddElement(VertexSemantics usage, uint32 usage_i, VertexDataType type, uint32 dimension);
+    void InsertElement(uint32 pos, VertexSemantics usage, uint32 usage_i, VertexDataType type, uint32 dimension);
 
     static bool IsCompatible(const VertexLayout& vbLayout, const VertexLayout& shaderLayout);
     static bool MakeCompatible(const VertexLayout& vbLayout, const VertexLayout& shaderLayout, VertexLayout* compatibleLayout);
 
-    void Save(DAVA::File* out) const;
-    void Load(DAVA::File* in);
+    bool Save(DAVA::File* out) const;
+    bool Load(DAVA::File* in);
 
     void Dump() const;
 
@@ -235,7 +257,8 @@ public:
 private:
     enum
     {
-        MaxElemCount = 8
+        MaxElemCount = 8,
+        MaxStreamCount = 2
     };
 
     struct
@@ -246,6 +269,18 @@ private:
         uint32 data_type : 8;
         uint32 data_count : 8;
     };
+
+    struct
+    Stream
+    {
+        uint32 first_elem : 8;
+        uint32 elem_count : 8;
+        uint32 freq : 8;
+        uint32 __pad : 8;
+    };
+
+    Stream _stream[MaxStreamCount];
+    uint32 _stream_count;
 
     Element _elem[MaxElemCount];
     uint32 _elem_count;
@@ -345,7 +380,15 @@ enum TextureFormat
     TEXTURE_FORMAT_EAC_R11G11_SIGNED,
 
     TEXTURE_FORMAT_D16,
-    TEXTURE_FORMAT_D24S8
+    TEXTURE_FORMAT_D24S8,
+
+    TEXTURE_FORMAT_R16F,
+    TEXTURE_FORMAT_RG16F,
+    TEXTURE_FORMAT_RGBA16F,
+
+    TEXTURE_FORMAT_R32F,
+    TEXTURE_FORMAT_RG32F,
+    TEXTURE_FORMAT_RGBA32F,
 };
 
 enum TextureFace
@@ -400,14 +443,13 @@ enum LoadAction
 enum StoreAction
 {
     STOREACTION_NONE = 0,
-    STOREACTION_STORE = 1
-    //    STOREACTION_RESOLVE    = 2
+    STOREACTION_STORE = 1,
+    STOREACTION_RESOLVE = 2
 };
 
 namespace VertexBuffer
 {
-struct
-Descriptor
+struct Descriptor
 {
     uint32 size;
     Pool pool;
@@ -434,8 +476,7 @@ enum IndexSize
 
 namespace IndexBuffer
 {
-struct
-Descriptor
+struct Descriptor
 {
     uint32 size;
     IndexSize indexSize;
@@ -458,14 +499,14 @@ Descriptor
 
 namespace Texture
 {
-struct
-Descriptor
+struct Descriptor
 {
-    TextureType type;
-    uint32 width;
-    uint32 height;
-    TextureFormat format;
-    uint32 levelCount;
+    TextureType type = TEXTURE_TYPE_2D;
+    uint32 width = 0;
+    uint32 height = 0;
+    TextureFormat format = TEXTURE_FORMAT_R8G8B8A8;
+    uint32 levelCount = 1;
+    uint32 sampleCount = 1;
     void* initialData[128]; // it must be writable!
     uint32 isRenderTarget : 1;
     uint32 autoGenMipmaps : 1;
@@ -474,11 +515,9 @@ Descriptor
     uint32 cpuAccessWrite : 1;
 
     Descriptor(uint32 w, uint32 h, TextureFormat fmt)
-        : type(TEXTURE_TYPE_2D)
-        , width(w)
+        : width(w)
         , height(h)
         , format(fmt)
-        , levelCount(1)
         , isRenderTarget(false)
         , autoGenMipmaps(false)
         , needRestore(true)
@@ -487,13 +526,9 @@ Descriptor
     {
         memset(initialData, 0, sizeof(initialData));
     }
+
     Descriptor()
-        : type(TEXTURE_TYPE_2D)
-        , width(0)
-        , height(0)
-        , format(TEXTURE_FORMAT_R8G8B8A8)
-        , levelCount(1)
-        , isRenderTarget(false)
+        : isRenderTarget(false)
         , autoGenMipmaps(false)
         , needRestore(true)
         , cpuAccessRead(false)
@@ -517,8 +552,21 @@ enum ColorMask
     COLORMASK_ALL = COLORMASK_R | COLORMASK_G | COLORMASK_B | COLORMASK_A
 };
 
-struct
-BlendState
+enum BlendFunc
+{
+};
+
+enum BlendOp
+{
+    BLENDOP_ZERO,
+    BLENDOP_ONE,
+    BLENDOP_SRC_ALPHA,
+    BLENDOP_INV_SRC_ALPHA,
+    BLENDOP_SRC_COLOR,
+    BLENDOP_DST_COLOR
+};
+
+struct BlendState
 {
     struct
     {
@@ -535,8 +583,14 @@ BlendState
 
     BlendState()
     {
-        for (unsigned i = 0; i != MAX_RENDER_TARGET_COUNT; ++i)
+        for (uint32 i = 0; i != MAX_RENDER_TARGET_COUNT; ++i)
         {
+            rtBlend[i].colorFunc = 0;
+            rtBlend[i].colorSrc = static_cast<uint32>(BLENDOP_ONE);
+            rtBlend[i].colorDst = static_cast<uint32>(BLENDOP_ZERO);
+            rtBlend[i].alphaFunc = 0;
+            rtBlend[i].alphaSrc = static_cast<uint32>(BLENDOP_ONE);
+            rtBlend[i].alphaDst = static_cast<uint32>(BLENDOP_ZERO);
             rtBlend[i].writeMask = COLORMASK_ALL;
             rtBlend[i].blendEnabled = false;
             rtBlend[i].alphaToCoverage = false;
@@ -544,24 +598,9 @@ BlendState
     }
 };
 
-enum BlendFunc
-{
-};
-
-enum BlendOp
-{
-    BLENDOP_ZERO,
-    BLENDOP_ONE,
-    BLENDOP_SRC_ALPHA,
-    BLENDOP_INV_SRC_ALPHA,
-    BLENDOP_SRC_COLOR,
-    BLENDOP_DST_COLOR
-};
-
 namespace PipelineState
 {
-struct
-Descriptor
+struct Descriptor
 {
     VertexLayout vertexLayout;
     DAVA::FastName vprogUid;
@@ -572,8 +611,7 @@ Descriptor
 
 namespace SamplerState
 {
-struct
-Descriptor
+struct Descriptor
 {
     struct
     Sampler
@@ -584,7 +622,8 @@ Descriptor
         uint32 minFilter : 2;
         uint32 magFilter : 2;
         uint32 mipFilter : 2;
-        uint32 pad : 20;
+        uint32 anisotropyLevel : 8;
+        uint32 pad : 12;
 
         Sampler()
             : addrU(TEXADDR_WRAP)
@@ -593,6 +632,7 @@ Descriptor
             , minFilter(TEXFILTER_LINEAR)
             , magFilter(TEXFILTER_LINEAR)
             , mipFilter(TEXMIPFILTER_LINEAR)
+            , anisotropyLevel(1)
             , pad(0)
         {
         }
@@ -644,8 +684,9 @@ struct Descriptor
     uint32 stencilEnabled : 1;
     uint32 stencilTwoSided : 1;
     uint32 pad : 25;
+    uint32 pad64 : 32;
 
-    struct
+    struct StencilDescriptor
     {
         uint8 readMask;
         uint8 writeMask;
@@ -665,6 +706,7 @@ struct Descriptor
         , stencilEnabled(false)
         , stencilTwoSided(false)
         , pad(0)
+        , pad64(0)
     {
         stencilFront.readMask = 0xFF;
         stencilFront.writeMask = 0xFF;
@@ -689,8 +731,7 @@ struct Descriptor
 };
 }
 
-struct
-ProgConstInfo
+struct ProgConstInfo
 {
     DAVA::FastName uid; // name
     uint32 bufferIndex;
@@ -711,8 +752,7 @@ enum CullMode
 ////////////////////////////////////////////////////////////////////////////////
 // viewport
 
-struct
-Viewport
+struct Viewport
 {
     uint32 x = 0;
     uint32 y = 0;
@@ -733,25 +773,19 @@ Viewport
 ////////////////////////////////////////////////////////////////////////////////
 // render-target state
 
-struct
-RenderPassConfig
+struct RenderPassConfig
 {
-    struct
-    ColorBuffer
+    struct ColorBuffer
     {
-        Handle texture;
-        TextureFace textureFace;
-        uint32 textureLevel;
-        LoadAction loadAction;
-        StoreAction storeAction;
+        Handle texture = InvalidHandle;
+        Handle multisampleTexture = InvalidHandle;
+        TextureFace textureFace = TEXTURE_FACE_POSITIVE_X;
+        uint32 textureLevel = 0;
+        LoadAction loadAction = LOADACTION_CLEAR;
+        StoreAction storeAction = STOREACTION_NONE;
         float clearColor[4];
 
         ColorBuffer()
-            : texture(InvalidHandle)
-            , textureFace(TEXTURE_FACE_NEGATIVE_X)
-            , textureLevel(0)
-            , loadAction(LOADACTION_CLEAR)
-            , storeAction(STOREACTION_NONE)
         {
             clearColor[0] = 0;
             clearColor[1] = 0;
@@ -760,39 +794,48 @@ RenderPassConfig
         }
     };
 
-    struct
-    DepthStencilBuffer
+    struct DepthStencilBuffer
     {
-        Handle texture;
-        LoadAction loadAction;
-        StoreAction storeAction;
-        float clearDepth;
-        uint32 clearStencil;
-
-        DepthStencilBuffer()
-            : texture(DefaultDepthBuffer)
-            , loadAction(LOADACTION_CLEAR)
-            , storeAction(STOREACTION_NONE)
-            , clearDepth(1.0f)
-            , clearStencil(0)
-        {
-        }
+        Handle texture = DefaultDepthBuffer;
+        Handle multisampleTexture = InvalidHandle;
+        LoadAction loadAction = LOADACTION_CLEAR;
+        StoreAction storeAction = STOREACTION_NONE;
+        float clearDepth = 1.0f;
+        uint32 clearStencil = 0;
     };
 
     ColorBuffer colorBuffer[MAX_RENDER_TARGET_COUNT];
     DepthStencilBuffer depthStencilBuffer;
 
-    Handle queryBuffer;
+    AntialiasingType antialiasingType = AntialiasingType::NONE;
+
+    Handle queryBuffer = InvalidHandle;
+    Handle perfQueryStart = InvalidHandle;
+    Handle perfQueryEnd = InvalidHandle;
     Viewport viewport;
+    int32 priority = 0;
+    uint32 invertCulling = 0;
 
-    int priority;
-    uint32 invertCulling : 1;
-
-    RenderPassConfig()
-        : queryBuffer(InvalidHandle)
-        , priority(0)
-        , invertCulling(0)
+    bool IsValid() const
     {
+        if (depthStencilBuffer.storeAction == STOREACTION_RESOLVE)
+            return false;
+
+        bool usingResolve = colorBuffer[0].storeAction == STOREACTION_RESOLVE;
+        bool hasMSTexture = colorBuffer[0].multisampleTexture != InvalidHandle;
+
+        if (UsingMSAA() && !(usingResolve || hasMSTexture))
+            return false;
+
+        if (usingResolve && !(UsingMSAA() || hasMSTexture))
+            return false;
+
+        return true;
+    }
+
+    bool UsingMSAA() const
+    {
+        return (antialiasingType == AntialiasingType::MSAA_2X) || (antialiasingType == AntialiasingType::MSAA_4X);
     }
 };
 
@@ -829,6 +872,24 @@ Descriptor
 };
 }
 
+///////////////////////////////////////////////////////////////////////////////
+// perf-query
+namespace PerfQuery
+{
+struct Descriptor
+{
+};
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// const-buffer
+namespace ConstBuffer
+{
+struct Descriptor
+{
+};
+}
+
 //------------------------------------------------------------------------------
 
 struct
@@ -848,63 +909,16 @@ ScissorRect
     }
 };
 
-//------------------------------------------------------------------------------
-
-uint32 NativeColorRGBA(float r, float g, float b, float a = 1.0f);
-
 } // namespace rhi
 
 //------------------------------------------------------------------------------
 //
 //
 
-template <typename src, typename dst>
-inline dst
-nonaliased_cast(src x)
-{
-    // (quite a funny way to) ensure types are the same size
-    // commented-out until acceptable way to stop the compiler-spamming is found
-    //    #pragma warning( disable: 177 ) // variable "WrongSizes" was declared but never referenced
-    //    static int  WrongSizes[sizeof(src) == sizeof(dst) ? 1 : -1];
-    //    #pragma warning( default: 177 )
-
-    union {
-        src s;
-        dst d;
-    } tmp;
-
-    tmp.s = x;
-
-    return tmp.d;
-}
-
-#define countof(array) (sizeof(array) / sizeof(array[0]))
-#define L_ALIGNED_SIZE(size, align) (((size) + ((align)-1)) & (~((align)-1)))
-
-inline bool
-IsEmptyString(const char* str)
-{
-    return !(str && str[0] != '\0');
-}
-
-void Trace(const char* format, ...);
-#define LCP Trace("%s : %i\n", __FILE__, __LINE__);
 
 
 
 
-#if defined(__DAVAENGINE_IPHONE__) || defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_ANDROID__)
-
-#define stricmp strcasecmp
-#define strnicmp strncasecmp
-
-#endif
-
-#if defined(__DAVAENGINE_WIN32__) || defined(__DAVAENGINE_WIN_UAP__)
-
-    #define stricmp _strcmpi
-
-#endif
 
 
 

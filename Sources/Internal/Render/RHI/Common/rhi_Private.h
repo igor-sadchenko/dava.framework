@@ -1,40 +1,12 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
-
 #ifndef __RHI_PRIVATE_H__
 #define __RHI_PRIVATE_H__
 
-    #include "../rhi_Type.h"
+#include "../rhi_Type.h"
+#include "rhi_CommonImpl.h"
 
 namespace rhi
 {
+struct InitParam;
 ////////////////////////////////////////////////////////////////////////////////
 // render-target
 
@@ -44,7 +16,7 @@ namespace rhi
 namespace VertexBuffer
 {
 Handle Create(const VertexBuffer::Descriptor& desc);
-void Delete(Handle vb);
+void Delete(Handle vb, bool forceExecute = false);
 
 bool Update(Handle vb, const void* data, uint32 offset = 0, uint32 size = 0);
 
@@ -61,7 +33,7 @@ bool NeedRestore(Handle vb);
 namespace IndexBuffer
 {
 Handle Create(const IndexBuffer::Descriptor& desc);
-void Delete(Handle ib);
+void Delete(Handle ib, bool forceExecute = false);
 
 bool Update(Handle ib, const void* data, uint32 offset = 0, uint32 size = 0);
 
@@ -81,8 +53,22 @@ Handle Create(uint32 maxObjectCount);
 void Reset(Handle buf);
 void Delete(Handle buf);
 
+bool BufferIsReady(Handle buf);
 bool IsReady(Handle buf, uint32 objectIndex);
-int Value(Handle buf, uint32 objectIndex);
+int32 Value(Handle buf, uint32 objectIndex);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// perfquery-set
+
+namespace PerfQuery
+{
+Handle Create();
+void Delete(Handle query);
+void Reset(Handle query);
+
+bool IsReady(Handle query);
+uint64 Value(Handle query);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -91,7 +77,7 @@ int Value(Handle buf, uint32 objectIndex);
 namespace Texture
 {
 Handle Create(const Descriptor& desc);
-void Delete(Handle tex);
+void Delete(Handle tex, bool forceExecute = false);
 
 void* Map(Handle tex, unsigned level = 0, TextureFace face = TEXTURE_FACE_NEGATIVE_X);
 void Unmap(Handle tex);
@@ -110,20 +96,10 @@ Handle Create(const Descriptor& desc);
 void Delete(Handle ps);
 Handle CreateVertexConstBuffer(Handle ps, uint32 bufIndex);
 Handle CreateFragmentConstBuffer(Handle ps, uint32 bufIndex);
-
-uint32 VertexConstBufferCount(Handle ps);
-uint32 VertexConstCount(Handle ps, uint32 bufIndex);
-bool GetVertexConstInfo(Handle ps, uint32 bufIndex, uint32 maxCount, ProgConstInfo* info);
-
-uint32 FragmentConstBufferCount(Handle ps);
-uint32 FragmentConstCount(Handle ps, uint32 bufIndex);
-bool GetFragmentConstInfo(Handle ps, uint32 bufIndex, uint32 maxCount, ProgConstInfo* info);
-
 } // namespace PipelineState
 
 namespace ConstBuffer
 {
-uint32 ConstCount(Handle cb);
 bool SetConst(Handle cb, uint32 constIndex, uint32 constCount, const float* data);
 bool SetConst(Handle cb, uint32 constIndex, uint32 constSubIndex, const float* data, uint32 dataCount);
 void Delete(Handle cb);
@@ -153,7 +129,7 @@ namespace SyncObject
 {
 Handle Create();
 void Delete(Handle obj);
-bool IsSygnaled(Handle obj);
+bool IsSignaled(Handle obj);
 }
 
 namespace CommandBuffer
@@ -176,6 +152,8 @@ void SetIndices(Handle cmdBuf, Handle ib);
 void SetQueryBuffer(Handle cmdBuf, Handle queryBuf);
 void SetQueryIndex(Handle cmdBuf, uint32 index);
 
+void IssueTimestampQuery(Handle cmdBuf, Handle perfQuery);
+
 void SetFragmentConstBuffer(Handle cmdBuf, uint32 bufIndex, Handle buf);
 void SetFragmentTexture(Handle cmdBuf, uint32 unitIndex, Handle tex);
 
@@ -185,14 +163,38 @@ void SetSamplerState(Handle cmdBuf, const Handle samplerState);
 void DrawPrimitive(Handle cmdBuf, PrimitiveType type, uint32 count);
 void DrawIndexedPrimitive(Handle cmdBuf, PrimitiveType type, uint32 count, uint32 vertexCount, uint32 firstVertex = 0, uint32 startIndex = 0);
 
+void DrawInstancedPrimitive(Handle cmdBuf, PrimitiveType type, uint32 instCount, uint32 count);
+void DrawInstancedIndexedPrimitive(Handle cmdBuf, PrimitiveType type, uint32 instCount, uint32 primCount, uint32 vertexCount, uint32 firstVertex = 0, uint32 startIndex = 0, uint32 baseInstance = 0);
+
 void SetMarker(Handle cmdBuf, const char* text);
 
 } // namespace CommandBuffer
 
-void InitPacketListPool(uint32 maxCount);
-void InitTextreSetPool(uint32 maxCount);
+namespace DispatchPlatform
+{
+void InitContext();
+bool ValidateSurface(); //TODO - may be this should be part of opengl only?
+void FinishRendering(); //perform finalization before going to suspend
 
-void PresentImpl(Handle sync);
+void ProcessImmediateCommand(CommonImpl::ImmediateCommand* command); //called from render thread
+
+void FinishFrame(); //this functions is called from main thread
+void ExecuteFrame(const CommonImpl::Frame&); //should also handle command buffer sync here
+void RejectFrame(const CommonImpl::Frame&); //should also handle command buffer sync here
+
+bool PresentBuffer();
+void ResetBlock();
+}
+
+void InitializeImplementation(Api api, const InitParam& param);
+void UninitializeImplementation();
+void ReportError(const InitParam&, RenderingError);
+
+struct RenderDeviceCaps;
+namespace MutableDeviceCaps
+{
+RenderDeviceCaps& Get();
+}
 
 // debug
 
@@ -212,7 +214,9 @@ extern uint32 stat_SET_IB;
 
 
 
-#define DV_USE_UNIFORMBUFFER_OBJECT 0
+#define RHI_GL__USE_UNIFORMBUFFER_OBJECT 0
+#define RHI_GL__USE_STATIC_CONST_BUFFER_OPTIMIZATION 0
+#define RHI_GL__DEBUG_CONST_BUFFERS 0
 
 
 #endif // __RHI_PRIVATE_H__

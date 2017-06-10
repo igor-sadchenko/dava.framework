@@ -1,40 +1,13 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
+#include "../Common/rhi_Private.h"
+#include "../Common/rhi_Pool.h"
+#include "../rhi_Public.h"
+#include "rhi_Metal.h"
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-    #include "../Common/rhi_Private.h"
-    #include "../Common/rhi_Pool.h"
-    #include "rhi_Metal.h"
-
-    #include "Debug/DVAssert.h"
-    #include "FileSystem/Logger.h"
+#include "Debug/DVAssert.h"
+#include "Logger/Logger.h"
 using DAVA::Logger;
 
-    #include "_metal.h"
+#include "_metal.h"
 
 #if !(TARGET_IPHONE_SIMULATOR == 1)
 namespace rhi
@@ -44,8 +17,10 @@ namespace rhi
 struct
 SamplerStateMetal_t
 {
-    uint32 count;
-    id<MTLSamplerState> uid[MAX_FRAGMENT_TEXTURE_SAMPLER_COUNT];
+    uint32 fp_count;
+    id<MTLSamplerState> fp_uid[MAX_FRAGMENT_TEXTURE_SAMPLER_COUNT];
+    uint32 vp_count;
+    id<MTLSamplerState> vp_uid[MAX_VERTEX_TEXTURE_SAMPLER_COUNT];
 };
 
 typedef ResourcePool<SamplerStateMetal_t, RESOURCE_SAMPLER_STATE, SamplerState::Descriptor, false> SamplerStateMetalPool;
@@ -118,11 +93,12 @@ metal_SamplerState_Create(const SamplerState::Descriptor& desc)
 {
     Handle handle = SamplerStateMetalPool::Alloc();
     SamplerStateMetal_t* state = SamplerStateMetalPool::Get(handle);
+    MTLSamplerDescriptor* s_desc = [MTLSamplerDescriptor new];
 
-    state->count = desc.fragmentSamplerCount;
+    state->fp_count = desc.fragmentSamplerCount;
     for (unsigned s = 0; s != desc.fragmentSamplerCount; ++s)
     {
-        MTLSamplerDescriptor* s_desc = [MTLSamplerDescriptor new];
+        DVASSERT(desc.fragmentSampler[s].anisotropyLevel <= DeviceCaps().maxAnisotropy);
 
         s_desc.sAddressMode = _AddrMode(TextureAddrMode(desc.fragmentSampler[s].addrU));
         s_desc.tAddressMode = _AddrMode(TextureAddrMode(desc.fragmentSampler[s].addrV));
@@ -132,11 +108,32 @@ metal_SamplerState_Create(const SamplerState::Descriptor& desc)
         s_desc.mipFilter = _TextureMipFilter(TextureMipFilter(desc.fragmentSampler[s].mipFilter));
         s_desc.lodMinClamp = 0.0f;
         s_desc.lodMaxClamp = FLT_MAX;
-        s_desc.maxAnisotropy = 1;
+        s_desc.maxAnisotropy = desc.fragmentSampler[s].anisotropyLevel;
         s_desc.normalizedCoordinates = YES;
 
-        state->uid[s] = [_Metal_Device newSamplerStateWithDescriptor:s_desc];
+        state->fp_uid[s] = [_Metal_Device newSamplerStateWithDescriptor:s_desc];
     }
+
+    state->vp_count = desc.vertexSamplerCount;
+    for (unsigned s = 0; s != desc.vertexSamplerCount; ++s)
+    {
+        DVASSERT(desc.vertexSampler[s].anisotropyLevel <= DeviceCaps().maxAnisotropy);
+
+        s_desc.sAddressMode = _AddrMode(TextureAddrMode(desc.vertexSampler[s].addrU));
+        s_desc.tAddressMode = _AddrMode(TextureAddrMode(desc.vertexSampler[s].addrV));
+        s_desc.rAddressMode = _AddrMode(TextureAddrMode(desc.vertexSampler[s].addrW));
+        s_desc.minFilter = _TextureFilter(TextureFilter(desc.vertexSampler[s].minFilter));
+        s_desc.magFilter = _TextureFilter(TextureFilter(desc.vertexSampler[s].magFilter));
+        s_desc.mipFilter = _TextureMipFilter(TextureMipFilter(desc.vertexSampler[s].mipFilter));
+        s_desc.lodMinClamp = 0.0f;
+        s_desc.lodMaxClamp = FLT_MAX;
+        s_desc.maxAnisotropy = desc.vertexSampler[s].anisotropyLevel;
+        s_desc.normalizedCoordinates = YES;
+
+        state->vp_uid[s] = [_Metal_Device newSamplerStateWithDescriptor:s_desc];
+    }
+
+    [s_desc release];
 
     return handle;
 }
@@ -144,6 +141,23 @@ metal_SamplerState_Create(const SamplerState::Descriptor& desc)
 static void
 metal_SamplerState_Delete(Handle state)
 {
+    SamplerStateMetal_t* self = SamplerStateMetalPool::Get(state);
+
+    if (self)
+    {
+        for (unsigned s = 0; s != self->fp_count; ++s)
+        {
+            [self->fp_uid[s] release];
+            self->fp_uid[s] = nil;
+        }
+
+        for (unsigned s = 0; s != self->vp_count; ++s)
+        {
+            [self->vp_uid[s] release];
+            self->vp_uid[s] = nil;
+        }
+    }
+
     SamplerStateMetalPool::Free(state);
 }
 
@@ -159,8 +173,11 @@ void SetToRHI(Handle hstate, id<MTLRenderCommandEncoder> ce)
 {
     SamplerStateMetal_t* state = SamplerStateMetalPool::Get(hstate);
 
-    for (unsigned s = 0; s != state->count; ++s)
-        [ce setFragmentSamplerState:state->uid[s] atIndex:s];
+    for (unsigned s = 0; s != state->fp_count; ++s)
+        [ce setFragmentSamplerState:state->fp_uid[s] atIndex:s];
+
+    for (unsigned s = 0; s != state->vp_count; ++s)
+        [ce setVertexSamplerState:state->vp_uid[s] atIndex:s];
 }
 }
 

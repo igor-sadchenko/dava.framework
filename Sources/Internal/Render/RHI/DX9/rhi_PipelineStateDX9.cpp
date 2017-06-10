@@ -1,48 +1,21 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
     #include "../Common/rhi_Private.h"
-    #include "../Common/rhi_Pool.h"
-    #include "../Common/rhi_RingBuffer.h"
-    #include "../rhi_ShaderCache.h"
-    #include "rhi_DX9.h"
+#include "../Common/rhi_Pool.h"
+#include "../Common/rhi_Utils.h"
+#include "../Common/rhi_RingBuffer.h"
+#include "../rhi_ShaderCache.h"
+#include "rhi_DX9.h"
 
-    #include "Debug/DVAssert.h"
-    #include "FileSystem/Logger.h"
+#include "Debug/DVAssert.h"
+#include "Logger/Logger.h"
 using DAVA::Logger;
 using DAVA::uint32;
 using DAVA::uint16;
 using DAVA::uint8;
 
-    #include "_dx9.h"
-    #include <D3DX9Shader.h>
+#include "_dx9.h"
+#include <D3DX9Shader.h>
 
-    #include <vector>
+#include <vector>
 
 namespace rhi
 {
@@ -52,7 +25,7 @@ VDeclDX9
     VertexLayout layout;
     IDirect3DVertexDeclaration9* vdecl9;
 
-    static IDirect3DVertexDeclaration9* Get(const VertexLayout& layout, bool force_immediate = false);
+    static IDirect3DVertexDeclaration9* Get(const VertexLayout& layout, bool forceExecute = false);
 
 private:
     static std::vector<VDeclDX9> _VDecl;
@@ -61,8 +34,7 @@ std::vector<VDeclDX9> VDeclDX9::_VDecl;
 
 static RingBuffer _DX9_DefConstRingBuf;
 
-static void
-DumpShaderTextDX9(const char* code, unsigned code_sz)
+static void DumpShaderTextDX9(const char* code, unsigned code_sz)
 {
     char src[64 * 1024];
     char* src_line[1024];
@@ -117,8 +89,7 @@ DumpShaderTextDX9(const char* code, unsigned code_sz)
 
 //------------------------------------------------------------------------------
 
-IDirect3DVertexDeclaration9*
-VDeclDX9::Get(const VertexLayout& layout, bool force_immediate)
+IDirect3DVertexDeclaration9* VDeclDX9::Get(const VertexLayout& layout, bool forceExecute)
 {
     IDirect3DVertexDeclaration9* vdecl = nullptr;
 
@@ -143,7 +114,7 @@ VDeclDX9::Get(const VertexLayout& layout, bool force_immediate)
             if (layout.ElementSemantics(i) == VS_PAD)
                 continue;
 
-            elem[elemCount].Stream = 0;
+            elem[elemCount].Stream = layout.ElementStreamIndex(i);
             elem[elemCount].Offset = (WORD)(layout.ElementOffset(i));
             elem[elemCount].Method = D3DDECLMETHOD_DEFAULT;
             elem[elemCount].UsageIndex = layout.ElementSemanticsIndex(i);
@@ -215,7 +186,7 @@ VDeclDX9::Get(const VertexLayout& layout, bool force_immediate)
 
         DX9Command cmd = { DX9Command::CREATE_VERTEX_DECLARATION, { uint64_t(elem), uint64_t(&vd9) } };
 
-        ExecDX9(&cmd, 1, force_immediate);
+        ExecDX9(&cmd, 1, forceExecute);
 
         if (SUCCEEDED(cmd.retval))
         {
@@ -239,8 +210,7 @@ VDeclDX9::Get(const VertexLayout& layout, bool force_immediate)
 
 //==============================================================================
 
-class
-PipelineStateDX9_t
+class PipelineStateDX9_t
 {
 public:
     PipelineStateDX9_t()
@@ -255,14 +225,13 @@ public:
         {
         };
 
-        ConstBuf();
         ~ConstBuf();
 
-        void Construct(ProgType type, unsigned reg_i, unsigned reg_count);
+        void Construct(ProgType type, unsigned reg_i, unsigned reg_count, unsigned elem_count);
         void Destroy();
 
-        unsigned ConstCount() const;
-        const void* InstData() const;
+        unsigned ConstElementCount() const;
+        const void* InstData();
         void InvalidateInst();
 
         bool SetConst(unsigned const_i, unsigned count, const float* data);
@@ -270,11 +239,12 @@ public:
         void SetToRHI(const void* inst_data) const;
 
     private:
-        ProgType progType;
-        float* value;
-        mutable float* inst;
-        unsigned reg;
-        unsigned regCount;
+        ProgType progType = PROG_VERTEX;
+        float* value = nullptr;
+        float* inst = nullptr;
+        unsigned elementCount = 0;
+        unsigned registerBase = 0;
+        unsigned registerCount = 0;
     };
 
     struct
@@ -292,12 +262,14 @@ public:
 
         bool Construct(const void* code, unsigned code_sz, const VertexLayout& vdecl);
         Handle CreateConstBuffer(unsigned buf_i);
-        void SetToRHI(uint32 layoutUID, bool force_immediate = false);
+        void SetToRHI(uint32 layoutUID, bool forceExecute = false);
+        void SetupVertexStreams(uint32 layoutUID, unsigned instCount);
 
         struct
         vdecl_t
         {
             uint32 layoutUID;
+            VertexLayout layout;
             IDirect3DVertexDeclaration9* vdecl;
         };
 
@@ -308,8 +280,9 @@ public:
         IDirect3DVertexShader9* vs9;
         IDirect3DVertexDeclaration9* vdecl9; // ref-only
         std::vector<vdecl_t> altVdecl9;
-        unsigned cbufReg[MAX_CONST_BUFFER_COUNT];
-        unsigned cbufCount[MAX_CONST_BUFFER_COUNT];
+        unsigned cbufElemCount[MAX_CONST_BUFFER_COUNT];
+        unsigned cbufRegBase[MAX_CONST_BUFFER_COUNT];
+        unsigned cbufRegCount[MAX_CONST_BUFFER_COUNT];
         DAVA::FastName uid;
     };
 
@@ -331,8 +304,9 @@ public:
         unsigned codeSize;
         void* code;
         IDirect3DPixelShader9* ps9;
-        unsigned cbufReg[MAX_CONST_BUFFER_COUNT];
-        unsigned cbufCount[MAX_CONST_BUFFER_COUNT];
+        unsigned cbufElemCount[MAX_CONST_BUFFER_COUNT];
+        unsigned cbufRegBase[MAX_CONST_BUFFER_COUNT];
+        unsigned cbufRegCount[MAX_CONST_BUFFER_COUNT];
         DAVA::FastName uid;
     };
 
@@ -353,16 +327,6 @@ RHI_IMPL_POOL_SIZE(PipelineStateDX9_t::ConstBuf, RESOURCE_CONST_BUFFER, Pipeline
 
 //------------------------------------------------------------------------------
 
-PipelineStateDX9_t::ConstBuf::ConstBuf()
-    : value(nullptr)
-    , inst(nullptr)
-    , reg(DAVA::InvalidIndex)
-    , regCount(0)
-{
-}
-
-//------------------------------------------------------------------------------
-
 PipelineStateDX9_t::ConstBuf::~ConstBuf()
 {
     if (value)
@@ -374,17 +338,20 @@ PipelineStateDX9_t::ConstBuf::~ConstBuf()
 
 //------------------------------------------------------------------------------
 
-void PipelineStateDX9_t::ConstBuf::Construct(ProgType ptype, unsigned reg_i, unsigned reg_count)
+void PipelineStateDX9_t::ConstBuf::Construct(ProgType ptype, unsigned reg_i, unsigned reg_count, unsigned elem_count)
 {
     DVASSERT(!value);
+    DVASSERT(elem_count);
     DVASSERT(reg_i != DAVA::InvalidIndex);
     DVASSERT(reg_count);
 
+    elementCount = elem_count;
+    registerBase = reg_i;
+    registerCount = reg_count;
+
     progType = ptype;
-    value = (float*)(malloc(reg_count * 4 * sizeof(float)));
+    value = (float*)(malloc(elementCount * 4 * sizeof(float)));
     inst = nullptr;
-    reg = reg_i;
-    regCount = reg_count;
 }
 
 //------------------------------------------------------------------------------
@@ -397,28 +364,29 @@ void PipelineStateDX9_t::ConstBuf::Destroy()
 
         value = nullptr;
         inst = nullptr;
-        reg = 0;
-        regCount = 0;
+        elementCount = 0;
+        registerBase = 0;
+        registerCount = 0;
     }
 }
 
 //------------------------------------------------------------------------------
 
 unsigned
-PipelineStateDX9_t::ConstBuf::ConstCount() const
+PipelineStateDX9_t::ConstBuf::ConstElementCount() const
 {
-    return regCount;
+    return elementCount;
 }
 
 //------------------------------------------------------------------------------
 
 const void*
-PipelineStateDX9_t::ConstBuf::InstData() const
+PipelineStateDX9_t::ConstBuf::InstData()
 {
     if (!inst)
     {
-        inst = _DX9_DefConstRingBuf.Alloc(4 * regCount);
-        memcpy(inst, value, regCount * 4 * sizeof(float));
+        inst = _DX9_DefConstRingBuf.Alloc(4 * elementCount);
+        memcpy(inst, value, elementCount * 4 * sizeof(float));
     }
 
     return inst;
@@ -437,7 +405,7 @@ bool PipelineStateDX9_t::ConstBuf::SetConst(unsigned const_i, unsigned const_cou
 {
     bool success = false;
 
-    if (const_i + const_count <= regCount)
+    if (const_i + const_count <= elementCount)
     {
         memcpy(value + const_i * 4, data, const_count * 4 * sizeof(float));
         inst = nullptr;
@@ -453,7 +421,7 @@ bool PipelineStateDX9_t::ConstBuf::SetConst(unsigned const_i, unsigned const_sub
 {
     bool success = false;
 
-    if (const_i <= regCount && const_sub_i < 4)
+    if (const_i <= elementCount && const_sub_i < 4)
     {
         memcpy(value + const_i * 4 + const_sub_i, data, dataCount * sizeof(float));
         inst = nullptr;
@@ -470,9 +438,9 @@ void PipelineStateDX9_t::ConstBuf::SetToRHI(const void* inst_data) const
     HRESULT hr;
 
     if (progType == PROG_VERTEX)
-        hr = _D3D9_Device->SetVertexShaderConstantF(reg, (const float*)inst_data, regCount);
+        hr = _D3D9_Device->SetVertexShaderConstantF(registerBase, (const float*)inst_data, registerCount);
     else
-        hr = _D3D9_Device->SetPixelShaderConstantF(reg, (const float*)inst_data, regCount);
+        hr = _D3D9_Device->SetPixelShaderConstantF(registerBase, (const float*)inst_data, registerCount);
 
     DVASSERT(SUCCEEDED(hr));
 }
@@ -502,7 +470,7 @@ bool PipelineStateDX9_t::VertexProgDX9::Construct(const void* bin, unsigned bin_
         void* code = shader->GetBufferPointer();
         DX9Command cmd = { DX9Command::CREATE_VERTEX_SHADER, { uint64_t((const DWORD*)code), uint64_t(&vs9) } };
 
-        ExecDX9(&cmd, 1);
+        ExecDX9(&cmd, 1, false);
 
         if (SUCCEEDED(cmd.retval))
         {
@@ -512,8 +480,9 @@ bool PipelineStateDX9_t::VertexProgDX9::Construct(const void* bin, unsigned bin_
                 sprintf(name, "VP_Buffer%u", i);
                 D3DXHANDLE c = const_tab->GetConstantByName(NULL, name);
 
-                cbufReg[i] = DAVA::InvalidIndex;
-                cbufCount[i] = 0;
+                cbufElemCount[i] = 0;
+                cbufRegBase[i] = DAVA::InvalidIndex;
+                cbufRegCount[i] = 0;
 
                 if (c)
                 {
@@ -524,8 +493,9 @@ bool PipelineStateDX9_t::VertexProgDX9::Construct(const void* bin, unsigned bin_
 
                     if (SUCCEEDED(hr))
                     {
-                        cbufReg[i] = desc.RegisterIndex;
-                        cbufCount[i] = desc.Elements;
+                        cbufElemCount[i] = desc.Elements;
+                        cbufRegBase[i] = desc.RegisterIndex;
+                        cbufRegCount[i] = desc.RegisterCount;
                     }
                 }
                 else
@@ -541,18 +511,13 @@ bool PipelineStateDX9_t::VertexProgDX9::Construct(const void* bin, unsigned bin_
             // do some additional sanity checks
             for (unsigned i = 0; i != MAX_CONST_BUFFER_COUNT; ++i)
             {
-                if (cbufReg[i] == DAVA::InvalidIndex)
+                if (cbufRegBase[i] == DAVA::InvalidIndex)
                 {
-                    if (i == 0 && cbufReg[i + 1] != DAVA::InvalidIndex)
+                    if (i == 0 && cbufRegBase[i + 1] != DAVA::InvalidIndex)
                     {
                         Logger::Warning("WARNING: vertex-const-buf [%u] is unused (all uniform/variables are unused)", i);
                     }
                 }
-                //                else
-                //                {
-                //                    if( i )
-                //                        DVASSERT(cbufReg[i]>cbufReg[i-1]);
-                //                }
             }
 
             vdecl9 = VDeclDX9::Get(vdecl);
@@ -596,7 +561,7 @@ PipelineStateDX9_t::VertexProgDX9::CreateConstBuffer(unsigned buf_i)
 
         ConstBuf* cb = ConstBufDX9Pool::Get(handle);
 
-        cb->Construct(PROG_VERTEX, cbufReg[buf_i], cbufCount[buf_i]);
+        cb->Construct(PROG_VERTEX, cbufRegBase[buf_i], cbufRegCount[buf_i], cbufElemCount[buf_i]);
     }
 
     return handle;
@@ -604,13 +569,14 @@ PipelineStateDX9_t::VertexProgDX9::CreateConstBuffer(unsigned buf_i)
 
 //------------------------------------------------------------------------------
 
-void PipelineStateDX9_t::VertexProgDX9::SetToRHI(uint32 layoutUID, bool force_immediate)
+void PipelineStateDX9_t::VertexProgDX9::SetToRHI(uint32 layoutUID, bool forceExecute)
 {
     HRESULT hr = _D3D9_Device->SetVertexShader(vs9);
 
     if (SUCCEEDED(hr))
     {
         IDirect3DVertexDeclaration9* vd = vdecl9;
+        const VertexLayout* vl = &vertexLayout;
 
         if (layoutUID != VertexLayout::InvalidUID)
         {
@@ -621,6 +587,7 @@ void PipelineStateDX9_t::VertexProgDX9::SetToRHI(uint32 layoutUID, bool force_im
                 if (i->layoutUID == layoutUID)
                 {
                     vd = i->vdecl;
+                    vl = &(i->layout);
                     do_add = false;
                     break;
                 }
@@ -642,11 +609,13 @@ this->vertexLayout.Dump();
 Logger::Info("compatible-layout:");
 layout.Dump();
 */
-                    info.vdecl = VDeclDX9::Get(layout, force_immediate);
+                    info.vdecl = VDeclDX9::Get(layout, forceExecute);
                     info.layoutUID = layoutUID;
+                    info.layout = layout;
 
                     altVdecl9.push_back(info);
                     vd = info.vdecl;
+                    vl = &(altVdecl9.back().layout);
                 }
                 else
                 {
@@ -661,12 +630,61 @@ layout.Dump();
 
         hr = _D3D9_Device->SetVertexDeclaration(vd);
 
+        for (unsigned s = 0; s != vl->StreamCount(); ++s)
+        {
+            switch (vl->StreamFrequency(s))
+            {
+            case VDF_PER_VERTEX:
+                _D3D9_Device->SetStreamSourceFreq(s, 1);
+                break;
+            case VDF_PER_INSTANCE:
+                _D3D9_Device->SetStreamSourceFreq(s, 1);
+                break;
+            }
+        }
+
         if (FAILED(hr))
             Logger::Error("SetVertexDeclaration failed:\n%s\n", D3D9ErrorText(hr));
     }
     else
     {
         Logger::Error("SetVertexShader failed:\n%s\n", D3D9ErrorText(hr));
+    }
+}
+
+//------------------------------------------------------------------------------
+
+void
+PipelineStateDX9_t::VertexProgDX9::SetupVertexStreams(uint32 layoutUID, unsigned instCount)
+{
+    const VertexLayout* vl = &vertexLayout;
+
+    if (layoutUID != VertexLayout::InvalidUID)
+    {
+        bool do_add = true;
+
+        for (std::vector<vdecl_t>::iterator i = altVdecl9.begin(), i_end = altVdecl9.end(); i != i_end; ++i)
+        {
+            if (i->layoutUID == layoutUID)
+            {
+                vl = &(i->layout);
+                break;
+            }
+        }
+    }
+    // DO NOT try to add alt.vdecl here
+
+    for (unsigned s = 0; s != vl->StreamCount(); ++s)
+    {
+        switch (vl->StreamFrequency(s))
+        {
+        case VDF_PER_VERTEX:
+            _D3D9_Device->SetStreamSourceFreq(s, D3DSTREAMSOURCE_INDEXEDDATA | instCount);
+            break;
+        case VDF_PER_INSTANCE:
+            _D3D9_Device->SetStreamSourceFreq(s, D3DSTREAMSOURCE_INSTANCEDATA | 1);
+            break;
+        }
     }
 }
 
@@ -694,7 +712,7 @@ bool PipelineStateDX9_t::FragmentProgDX9::Construct(const void* bin, unsigned bi
         void* code = shader->GetBufferPointer();
         DX9Command cmd = { DX9Command::CREATE_PIXEL_SHADER, { uint64_t((const DWORD*)code), uint64_t(&ps9) } };
 
-        ExecDX9(&cmd, 1);
+        ExecDX9(&cmd, 1, false);
 
         if (SUCCEEDED(cmd.retval))
         {
@@ -704,8 +722,9 @@ bool PipelineStateDX9_t::FragmentProgDX9::Construct(const void* bin, unsigned bi
                 sprintf(name, "FP_Buffer%u", i);
                 D3DXHANDLE c = const_tab->GetConstantByName(NULL, name);
 
-                cbufReg[i] = DAVA::InvalidIndex;
-                cbufCount[i] = 0;
+                cbufElemCount[i] = 0;
+                cbufRegBase[i] = DAVA::InvalidIndex;
+                cbufRegCount[i] = 0;
 
                 if (c)
                 {
@@ -716,8 +735,9 @@ bool PipelineStateDX9_t::FragmentProgDX9::Construct(const void* bin, unsigned bi
 
                     if (SUCCEEDED(hr))
                     {
-                        cbufReg[i] = desc.RegisterIndex;
-                        cbufCount[i] = desc.Elements;
+                        cbufElemCount[i] = desc.Elements;
+                        cbufRegBase[i] = desc.RegisterIndex;
+                        cbufRegCount[i] = desc.RegisterCount;
                     }
                 }
                 else
@@ -733,18 +753,13 @@ bool PipelineStateDX9_t::FragmentProgDX9::Construct(const void* bin, unsigned bi
             // do some additional sanity checks
             for (unsigned i = 0; i != MAX_CONST_BUFFER_COUNT; ++i)
             {
-                if (cbufReg[i] == DAVA::InvalidIndex)
+                if (cbufRegBase[i] == DAVA::InvalidIndex)
                 {
-                    if (i == 0 && cbufReg[i + 1] != DAVA::InvalidIndex)
+                    if (i == 0 && cbufRegBase[i + 1] != DAVA::InvalidIndex)
                     {
                         Logger::Warning("WARNING: fragment-const-buf [%u] is unused (all uniform/variables are unused)", i);
                     }
                 }
-                //                else
-                //                {
-                //                    if( i )
-                //                        DVASSERT(cbufReg[i]>cbufReg[i-1]);
-                //                }
             }
 
             success = true;
@@ -783,7 +798,7 @@ PipelineStateDX9_t::FragmentProgDX9::CreateConstBuffer(unsigned buf_i)
 
         ConstBuf* cb = ConstBufDX9Pool::Get(handle);
 
-        cb->Construct(PROG_FRAGMENT, cbufReg[buf_i], cbufCount[buf_i]);
+        cb->Construct(PROG_FRAGMENT, cbufRegBase[buf_i], cbufRegCount[buf_i], cbufElemCount[buf_i]);
     }
 
     return handle;
@@ -808,21 +823,19 @@ dx9_PipelineState_Create(const PipelineState::Descriptor& desc)
     PipelineStateDX9_t* ps = PipelineStateDX9Pool::Get(handle);
     bool vprog_valid = false;
     bool fprog_valid = false;
-    static std::vector<uint8> vprog_bin;
-    static std::vector<uint8> fprog_bin;
+    const std::vector<uint8>& vprog_bin = rhi::ShaderCache::GetProg(desc.vprogUid);
+    const std::vector<uint8>& fprog_bin = rhi::ShaderCache::GetProg(desc.fprogUid);
 
     //Logger::Info("create PS");
     //Logger::Info("  vprog= %s",desc.vprogUid.c_str());
     //Logger::Info("  fprog= %s",desc.vprogUid.c_str());
     //desc.vertexLayout.Dump();
-    rhi::ShaderCache::GetProg(desc.vprogUid, &vprog_bin);
-    rhi::ShaderCache::GetProg(desc.fprogUid, &fprog_bin);
 
     ps->vprog.uid = desc.vprogUid;
     ps->fprog.uid = desc.fprogUid;
 
-    vprog_valid = ps->vprog.Construct((const char*)(&vprog_bin[0]), vprog_bin.size(), desc.vertexLayout);
-    fprog_valid = ps->fprog.Construct((const char*)(&fprog_bin[0]), fprog_bin.size());
+    vprog_valid = ps->vprog.Construct((const char*)(&vprog_bin[0]), static_cast<unsigned>(vprog_bin.size()), desc.vertexLayout);
+    fprog_valid = ps->fprog.Construct((const char*)(&fprog_bin[0]), static_cast<unsigned>(fprog_bin.size()));
 
     if (vprog_valid && fprog_valid)
     {
@@ -952,12 +965,22 @@ void SetToRHI(Handle ps, uint32 layoutUID)
 
 //------------------------------------------------------------------------------
 
-unsigned
-VertexLayoutStride(Handle ps)
+void
+SetupVertexStreams(Handle ps, uint32 layoutUID, uint32 instCount)
 {
     PipelineStateDX9_t* ps9 = PipelineStateDX9Pool::Get(ps);
 
-    return ps9->vprog.vertexLayout.Stride();
+    ps9->vprog.SetupVertexStreams(layoutUID, instCount);
+}
+
+//------------------------------------------------------------------------------
+
+unsigned
+VertexLayoutStride(Handle ps, uint32 stream)
+{
+    PipelineStateDX9_t* ps9 = PipelineStateDX9Pool::Get(ps);
+
+    return ps9->vprog.vertexLayout.Stride(stream);
 }
 
 } // namespace PipelineStateDX9
@@ -1013,8 +1036,7 @@ void InitializeRingBuffer(uint32 size)
     _DX9_DefConstRingBuf.Initialize(size);
 }
 
-const void*
-InstData(Handle cb)
+const void* Instance(Handle cb)
 {
     PipelineStateDX9_t::ConstBuf* cb9 = ConstBufDX9Pool::Get(cb);
 

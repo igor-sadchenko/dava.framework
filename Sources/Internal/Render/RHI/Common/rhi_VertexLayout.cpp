@@ -1,42 +1,17 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
+#include "../rhi_Type.h"
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
+#include "Debug/DVAssert.h"
+#include "Base/BaseTypes.h"
+#include "Logger/Logger.h"
+#include "FileSystem/File.h"
+#include "rhi_Utils.h"
+#include <atomic>
 
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-    #include "../rhi_Type.h"
-
-    #include "Debug/DVAssert.h"
-    #include "Base/BaseTypes.h"
 using DAVA::uint32;
 using DAVA::uint16;
 using DAVA::uint8;
 using DAVA::int8;
-    #include "FileSystem/Logger.h"
 using DAVA::Logger;
-    #include "FileSystem/File.h"
 
 namespace rhi
 {
@@ -44,6 +19,7 @@ namespace rhi
 
 VertexLayout::VertexLayout()
     : _elem_count(0)
+    , _stream_count(0)
 {
 }
 
@@ -58,14 +34,32 @@ VertexLayout::~VertexLayout()
 void VertexLayout::Clear()
 {
     _elem_count = 0;
+    _stream_count = 0;
 }
 
 //------------------------------------------------------------------------------
 
-void VertexLayout::AddElement(VertexSemantics usage, unsigned usage_i, VertexDataType type, unsigned dimension)
+void VertexLayout::AddStream(VertexDataFrequency freq)
+{
+    DVASSERT(_stream_count < MaxStreamCount);
+
+    _stream[_stream_count].elem_count = 0;
+    _stream[_stream_count].first_elem = _elem_count;
+    _stream[_stream_count].freq = freq;
+    _stream[_stream_count].__pad = 0;
+
+    ++_stream_count;
+}
+
+//------------------------------------------------------------------------------
+
+void VertexLayout::AddElement(VertexSemantics usage, uint32 usage_i, VertexDataType type, uint32 dimension)
 {
     DVASSERT(_elem_count < MaxElemCount);
     Element* e = _elem + _elem_count;
+
+    if (_stream_count == 0)
+        AddStream(VDF_PER_VERTEX);
 
     e->usage = usage;
     e->usage_index = usage_i;
@@ -73,6 +67,7 @@ void VertexLayout::AddElement(VertexSemantics usage, unsigned usage_i, VertexDat
     e->data_count = dimension;
 
     ++_elem_count;
+    ++_stream[_stream_count - 1].elem_count;
 }
 
 //------------------------------------------------------------------------------
@@ -91,12 +86,11 @@ VertexLayout::insert_elem( unsigned pos, VertexSemantics usage, unsigned usage_i
 
 //------------------------------------------------------------------------------
 
-unsigned
-VertexLayout::Stride() const
+uint32 VertexLayout::Stride(uint32 stream_i) const
 {
-    unsigned sz = 0;
+    uint32 sz = 0;
 
-    for (unsigned e = 0; e != _elem_count; ++e)
+    for (uint32 e = _stream[stream_i].first_elem; e != _stream[stream_i].first_elem + _stream[stream_i].elem_count; ++e)
         sz += ElementSize(e);
 
     return sz;
@@ -104,52 +98,77 @@ VertexLayout::Stride() const
 
 //------------------------------------------------------------------------------
 
-unsigned
-VertexLayout::ElementCount() const
+uint32 VertexLayout::StreamCount() const
+{
+    return _stream_count;
+}
+
+//------------------------------------------------------------------------------
+
+VertexDataFrequency VertexLayout::StreamFrequency(uint32 stream_i) const
+{
+    DVASSERT(stream_i < _stream_count);
+    return static_cast<VertexDataFrequency>(_stream[stream_i].freq);
+}
+
+//------------------------------------------------------------------------------
+
+uint32 VertexLayout::ElementCount() const
 {
     return _elem_count;
 }
 
 //------------------------------------------------------------------------------
 
-VertexSemantics
-VertexLayout::ElementSemantics(unsigned elem_i) const
+uint32 VertexLayout::ElementStreamIndex(uint32 elem_i) const
 {
-    return (VertexSemantics)(_elem[elem_i].usage);
+    uint32 s = 0;
+
+    for (; s != _stream_count; ++s)
+    {
+        if (elem_i >= _stream[s].first_elem && elem_i < _stream[s].first_elem + _stream[s].elem_count)
+            break;
+    }
+
+    return s;
 }
 
 //------------------------------------------------------------------------------
 
-unsigned
-VertexLayout::ElementSemanticsIndex(unsigned elem_i) const
+VertexSemantics VertexLayout::ElementSemantics(uint32 elem_i) const
 {
-    return (VertexSemantics)(_elem[elem_i].usage_index);
+    return static_cast<VertexSemantics>(_elem[elem_i].usage);
 }
 
 //------------------------------------------------------------------------------
 
-VertexDataType
-VertexLayout::ElementDataType(unsigned elem_i) const
+uint32 VertexLayout::ElementSemanticsIndex(uint32 elem_i) const
 {
-    return (VertexDataType)(_elem[elem_i].data_type);
+    return static_cast<VertexSemantics>(_elem[elem_i].usage_index);
 }
 
 //------------------------------------------------------------------------------
 
-unsigned
-VertexLayout::ElementDataCount(unsigned elem_i) const
+VertexDataType VertexLayout::ElementDataType(uint32 elem_i) const
+{
+    return static_cast<VertexDataType>(_elem[elem_i].data_type);
+}
+
+//------------------------------------------------------------------------------
+
+uint32 VertexLayout::ElementDataCount(uint32 elem_i) const
 {
     return _elem[elem_i].data_count;
 }
 
 //------------------------------------------------------------------------------
 
-unsigned
-VertexLayout::ElementOffset(unsigned elem_i) const
+uint32 VertexLayout::ElementOffset(uint32 elem_i) const
 {
-    unsigned off = 0;
+    uint32 off = 0;
+    uint32 s = ElementStreamIndex(elem_i);
 
-    for (unsigned e = 0; e < elem_i; ++e)
+    for (uint32 e = _stream[s].first_elem; e < elem_i; ++e)
         off += ElementSize(e);
 
     return off;
@@ -157,8 +176,7 @@ VertexLayout::ElementOffset(unsigned elem_i) const
 
 //------------------------------------------------------------------------------
 
-unsigned
-VertexLayout::ElementSize(unsigned elem_i) const
+uint32 VertexLayout::ElementSize(uint32 elem_i) const
 {
     const Element& e = _elem[elem_i];
 
@@ -185,95 +203,79 @@ VertexLayout::ElementSize(unsigned elem_i) const
 
 void VertexLayout::Dump() const
 {
-    for (unsigned e = 0; e != _elem_count; ++e)
+    for (uint32 s = 0; s != _stream_count; ++s)
     {
-        Logger::Info(
-        "[%u] +%02u  %s%u  %s x%u",
-        e, ElementOffset(e),
-        VertexSemanticsName(VertexSemantics(_elem[e].usage)), _elem[e].usage_index,
-        VertexDataTypeName(VertexDataType(_elem[e].data_type)), _elem[e].data_count);
+        Logger::Info("stream[%u]  stride= %u", s, Stride(s));
+        for (uint32 a = _stream[s].first_elem, a_end = _stream[s].first_elem + _stream[s].elem_count; a != a_end; ++a)
+        {
+            Logger::Info(
+            "  [%u] +%02u  %s%u  %s x%u",
+            a, ElementOffset(a),
+            VertexSemanticsName(VertexSemantics(_elem[a].usage)), _elem[a].usage_index,
+            VertexDataTypeName(VertexDataType(_elem[a].data_type)), _elem[a].data_count);
+        }
     }
-    Logger::Info("stride = %u\n", Stride());
 }
 
 //------------------------------------------------------------------------------
 
 bool VertexLayout::operator==(const VertexLayout& vl) const
 {
-    return (this->_elem_count == vl._elem_count) ? !memcmp(_elem, vl._elem, _elem_count * sizeof(Element)) : false;
+    return (this->_elem_count == vl._elem_count && this->_stream_count == vl._stream_count) ? (memcmp(_elem, vl._elem, _elem_count * sizeof(Element)) == 0 && memcmp(_stream, vl._stream, _stream_count * sizeof(Stream)) == 0) : false;
 }
 
 //------------------------------------------------------------------------------
 
-VertexLayout&
-VertexLayout::operator=(const VertexLayout& src)
+VertexLayout& VertexLayout::operator=(const VertexLayout& src)
 {
     this->_elem_count = src._elem_count;
 
-    for (unsigned e = 0; e != _elem_count; ++e)
+    for (uint32 e = 0; e != _elem_count; ++e)
         this->_elem[e] = src._elem[e];
+
+    this->_stream_count = src._stream_count;
+
+    for (uint32 s = 0; s != _stream_count; ++s)
+        this->_stream[s] = src._stream[s];
 
     return *this;
 }
 
 //==============================================================================
 
-struct
-VertexLayoutInfo
-{
-    uint32 uid;
-    VertexLayout layout;
-};
-
-static std::vector<VertexLayoutInfo> UniqueVertexLayout;
-static uint32 LastUID = 0;
+static const uint32 UniqueVertexLayoutCapacity = 1024;
+static std::atomic<uint32> UniqueVertexLayoutLastIdentifier(0);
+static VertexLayout UniqueVertexLayout[UniqueVertexLayoutCapacity] = {};
 
 //------------------------------------------------------------------------------
 
-const VertexLayout*
-VertexLayout::Get(uint32 uid)
+const VertexLayout* VertexLayout::Get(uint32 uid)
 {
-    const VertexLayout* layout = nullptr;
+    DVASSERT(uid < UniqueVertexLayoutCapacity);
 
-    for (std::vector<VertexLayoutInfo>::iterator i = UniqueVertexLayout.begin(), i_end = UniqueVertexLayout.end(); i != i_end; ++i)
-    {
-        if (i->uid == uid)
-        {
-            layout = &(i->layout); // CRAP: returning pointer to data inside std::vector
-            break;
-        }
-    }
+    if (uid == InvalidUID)
+        return nullptr;
 
-    return layout;
+    if (uid <= UniqueVertexLayoutLastIdentifier)
+        return UniqueVertexLayout + uid;
+
+    DAVA::Logger::Error("rhi::VertexLayout::Get(%u) failed, UniqueVertexLayoutSize: %u", uid, UniqueVertexLayoutLastIdentifier.load(std::memory_order_relaxed));
+    return nullptr;
 }
 
 //------------------------------------------------------------------------------
 
-uint32
-VertexLayout::UniqueId(const VertexLayout& layout)
+uint32 VertexLayout::UniqueId(const VertexLayout& layout)
 {
-    uint32 uid = InvalidUID;
-
-    for (std::vector<VertexLayoutInfo>::iterator i = UniqueVertexLayout.begin(), i_end = UniqueVertexLayout.end(); i != i_end; ++i)
+    for (uint32 i = 1, e = UniqueVertexLayoutLastIdentifier; i <= e; ++i)
     {
-        if (i->layout == layout)
-        {
-            uid = i->uid;
-            break;
-        }
+        if (UniqueVertexLayout[i] == layout)
+            return i;
     }
 
-    if (uid == InvalidUID)
-    {
-        VertexLayoutInfo info;
-
-        info.uid = ++LastUID;
-        info.layout = layout;
-
-        UniqueVertexLayout.push_back(info);
-        uid = info.uid;
-    }
-
+    uint32 uid = ++UniqueVertexLayoutLastIdentifier;
+    DVASSERT(uid < UniqueVertexLayoutCapacity);
+    UniqueVertexLayout[uid] = layout;
     return uid;
 }
 
@@ -283,13 +285,13 @@ bool VertexLayout::IsCompatible(const VertexLayout& vbLayout, const VertexLayout
 {
     bool usable = true;
 
-    for (unsigned s = 0; s != shaderLayout.ElementCount(); ++s)
+    for (uint32 s = 0; s != shaderLayout.ElementCount(); ++s)
     {
         DVASSERT(shaderLayout.ElementSemantics(s) != VS_PAD);
 
         bool hasAttr = false;
 
-        for (unsigned v = 0; v != vbLayout.ElementCount(); ++v)
+        for (uint32 v = 0; v != vbLayout.ElementCount(); ++v)
         {
             if (vbLayout.ElementSemantics(v) == shaderLayout.ElementSemantics(s) && vbLayout.ElementSemanticsIndex(v) == shaderLayout.ElementSemanticsIndex(s))
             {
@@ -320,17 +322,24 @@ bool VertexLayout::MakeCompatible(const VertexLayout& vbLayout, const VertexLayo
 
         compatibleLayout->Clear();
 
-        for (unsigned v = 0; v != vbLayout.ElementCount(); ++v)
+        uint32 last_stream_i = 0;
+        for (uint32 v = 0; v != vbLayout.ElementCount(); ++v)
         {
             bool do_pad = true;
 
-            for (unsigned s = 0; s != shaderLayout.ElementCount(); ++s)
+            for (uint32 s = 0; s != shaderLayout.ElementCount(); ++s)
             {
                 if (vbLayout.ElementSemantics(v) == shaderLayout.ElementSemantics(s) && vbLayout.ElementSemanticsIndex(v) == shaderLayout.ElementSemanticsIndex(s))
                 {
                     do_pad = false;
                     break;
                 }
+            }
+
+            if (last_stream_i != vbLayout.ElementStreamIndex(v))
+            {
+                last_stream_i = vbLayout.ElementStreamIndex(v);
+                compatibleLayout->AddStream(vbLayout.StreamFrequency(last_stream_i));
             }
 
             if (do_pad)
@@ -352,18 +361,38 @@ bool VertexLayout::MakeCompatible(const VertexLayout& vbLayout, const VertexLayo
 
 //------------------------------------------------------------------------------
 
-void VertexLayout::Save(DAVA::File* out) const
+bool VertexLayout::Save(DAVA::File* out) const
 {
-    out->Write(&_elem_count);
-    out->Write(_elem, _elem_count * sizeof(Element));
+#define WRITE_CHECK(exp) if (!(exp)) { return false; }
+
+    WRITE_CHECK(out->Write(&_elem_count) == sizeof(_elem_count));
+    WRITE_CHECK(out->Write(_elem, _elem_count * sizeof(Element)) == _elem_count * sizeof(Element));
+
+    WRITE_CHECK(out->Write(&_stream_count) == sizeof(_stream_count));
+    WRITE_CHECK(out->Write(_stream, _stream_count * sizeof(Stream)) == _stream_count * sizeof(Stream));
+    
+#undef WRITE_CHECK
+
+    return true;
 }
 
 //------------------------------------------------------------------------------
 
-void VertexLayout::Load(DAVA::File* in)
+bool VertexLayout::Load(DAVA::File* in)
 {
-    in->Read(&_elem_count);
-    in->Read(&_elem, _elem_count * sizeof(Element));
+#define READ_CHECK(exp) if (!(exp)) { return false; }
+
+    READ_CHECK(in->Read(&_elem_count) == sizeof(_elem_count));
+    READ_CHECK(_elem_count <= countof(_elem));
+    READ_CHECK(in->Read(&_elem, _elem_count * sizeof(Element)) == _elem_count * sizeof(Element));
+
+    READ_CHECK(in->Read(&_stream_count) == sizeof(_stream_count));
+    READ_CHECK(_stream_count <= countof(_stream));
+    READ_CHECK(in->Read(&_stream, _stream_count * sizeof(Stream)) == _stream_count * sizeof(Stream));
+    
+#undef READ_CHECK
+
+    return true;
 }
 
 //==============================================================================

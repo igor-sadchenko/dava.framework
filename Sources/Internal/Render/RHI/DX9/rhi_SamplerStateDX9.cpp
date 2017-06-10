@@ -1,40 +1,8 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-    #include "../Common/rhi_Private.h"
-    #include "../Common/rhi_Pool.h"
-    #include "rhi_DX9.h"
-
-    #include "Debug/DVAssert.h"
-    #include "FileSystem/Logger.h"
-using DAVA::Logger;
-
-    #include "_dx9.h"
+#include "../Common/rhi_Private.h"
+#include "../Common/rhi_Pool.h"
+#include "Debug/DVAssert.h"
+#include "rhi_DX9.h"
+#include "_dx9.h"
 
 namespace rhi
 {
@@ -52,6 +20,7 @@ SamplerStateDX9_t
         DWORD minFilter;
         DWORD magFilter;
         DWORD mipFilter;
+        DWORD anisotropyLevel;
     };
 
     sampler_t fragmentSampler[MAX_FRAGMENT_TEXTURE_SAMPLER_COUNT];
@@ -90,7 +59,7 @@ _AddrModeDX9(TextureAddrMode mode)
 //------------------------------------------------------------------------------
 
 static DWORD
-_TextureFilterDX9(TextureFilter filter)
+_TextureFilterDX9(TextureFilter filter, DAVA::uint32 anisotropyLevel)
 {
     DWORD f = 0;
 
@@ -100,8 +69,10 @@ _TextureFilterDX9(TextureFilter filter)
         f = D3DTEXF_POINT;
         break;
     case TEXFILTER_LINEAR:
-        f = D3DTEXF_LINEAR;
+        f = anisotropyLevel > 1 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR;
         break;
+    default:
+        DVASSERT(0, "Invalid TextureFilter value");
     }
 
     return f;
@@ -110,7 +81,7 @@ _TextureFilterDX9(TextureFilter filter)
 //------------------------------------------------------------------------------
 
 static DWORD
-_TextureMipFilterDX9(TextureMipFilter filter)
+_TextureMipFilterDX9(TextureMipFilter filter, DAVA::uint32 anisotropyLevel)
 {
     DWORD f = 0;
 
@@ -123,8 +94,10 @@ _TextureMipFilterDX9(TextureMipFilter filter)
         f = D3DTEXF_POINT;
         break;
     case TEXMIPFILTER_LINEAR:
-        f = D3DTEXF_LINEAR;
+        f = anisotropyLevel > 1 ? D3DTEXF_ANISOTROPIC : D3DTEXF_LINEAR;
         break;
+    default:
+        DVASSERT(0, "Invalid TextureMipFilter value");
     }
 
     return f;
@@ -141,23 +114,33 @@ dx9_SamplerState_Create(const SamplerState::Descriptor& desc)
     state->fragmentSamplerCount = desc.fragmentSamplerCount;
     for (unsigned i = 0; i != desc.fragmentSamplerCount; ++i)
     {
+        uint32 anisotropyLevel = desc.fragmentSampler[i].anisotropyLevel;
+        DVASSERT(anisotropyLevel >= 1);
+        DVASSERT(anisotropyLevel <= rhi::DeviceCaps().maxAnisotropy);
+
         state->fragmentSampler[i].addrU = _AddrModeDX9(TextureAddrMode(desc.fragmentSampler[i].addrU));
         state->fragmentSampler[i].addrV = _AddrModeDX9(TextureAddrMode(desc.fragmentSampler[i].addrV));
         state->fragmentSampler[i].addrW = _AddrModeDX9(TextureAddrMode(desc.fragmentSampler[i].addrW));
-        state->fragmentSampler[i].minFilter = _TextureFilterDX9(TextureFilter(desc.fragmentSampler[i].minFilter));
-        state->fragmentSampler[i].magFilter = _TextureFilterDX9(TextureFilter(desc.fragmentSampler[i].magFilter));
-        state->fragmentSampler[i].mipFilter = _TextureMipFilterDX9(TextureMipFilter(desc.fragmentSampler[i].mipFilter));
+        state->fragmentSampler[i].minFilter = _TextureFilterDX9(TextureFilter(desc.fragmentSampler[i].minFilter), anisotropyLevel);
+        state->fragmentSampler[i].magFilter = _TextureFilterDX9(TextureFilter(desc.fragmentSampler[i].magFilter), anisotropyLevel);
+        state->fragmentSampler[i].mipFilter = _TextureMipFilterDX9(TextureMipFilter(desc.fragmentSampler[i].mipFilter), anisotropyLevel);
+        state->fragmentSampler[i].anisotropyLevel = anisotropyLevel;
     }
 
     state->vertexSamplerCount = desc.vertexSamplerCount;
     for (unsigned i = 0; i != desc.vertexSamplerCount; ++i)
     {
+        uint32 anisotropyLevel = desc.vertexSampler[i].anisotropyLevel;
+        DVASSERT(anisotropyLevel >= 1);
+        DVASSERT(anisotropyLevel <= rhi::DeviceCaps().maxAnisotropy);
+
         state->vertexSampler[i].addrU = _AddrModeDX9(TextureAddrMode(desc.vertexSampler[i].addrU));
         state->vertexSampler[i].addrV = _AddrModeDX9(TextureAddrMode(desc.vertexSampler[i].addrV));
         state->vertexSampler[i].addrW = _AddrModeDX9(TextureAddrMode(desc.vertexSampler[i].addrW));
-        state->vertexSampler[i].minFilter = _TextureFilterDX9(TextureFilter(desc.vertexSampler[i].minFilter));
-        state->vertexSampler[i].magFilter = _TextureFilterDX9(TextureFilter(desc.vertexSampler[i].magFilter));
-        state->vertexSampler[i].mipFilter = _TextureMipFilterDX9(TextureMipFilter(desc.vertexSampler[i].mipFilter));
+        state->vertexSampler[i].minFilter = _TextureFilterDX9(TextureFilter(desc.vertexSampler[i].minFilter), anisotropyLevel);
+        state->vertexSampler[i].magFilter = _TextureFilterDX9(TextureFilter(desc.vertexSampler[i].magFilter), anisotropyLevel);
+        state->vertexSampler[i].mipFilter = _TextureMipFilterDX9(TextureMipFilter(desc.vertexSampler[i].mipFilter), anisotropyLevel);
+        state->vertexSampler[i].anisotropyLevel = anisotropyLevel;
     }
 
     return handle;
@@ -193,16 +176,27 @@ void SetToRHI(Handle hstate)
         _D3D9_Device->SetSamplerState(i, D3DSAMP_MINFILTER, state->fragmentSampler[i].minFilter);
         _D3D9_Device->SetSamplerState(i, D3DSAMP_MAGFILTER, state->fragmentSampler[i].magFilter);
         _D3D9_Device->SetSamplerState(i, D3DSAMP_MIPFILTER, state->fragmentSampler[i].mipFilter);
+
+        if (rhi::DeviceCaps().isAnisotropicFilteringSupported())
+        {
+            _D3D9_Device->SetSamplerState(i, D3DSAMP_MAXANISOTROPY, state->fragmentSampler[i].anisotropyLevel);
+        }
     }
 
     for (unsigned i = 0; i != state->vertexSamplerCount; ++i)
     {
-        _D3D9_Device->SetSamplerState(D3DDMAPSAMPLER + 1 + i, D3DSAMP_ADDRESSU, state->vertexSampler[i].addrU);
-        _D3D9_Device->SetSamplerState(D3DDMAPSAMPLER + 1 + i, D3DSAMP_ADDRESSV, state->vertexSampler[i].addrV);
-        _D3D9_Device->SetSamplerState(D3DDMAPSAMPLER + 1 + i, D3DSAMP_ADDRESSW, state->vertexSampler[i].addrW);
-        _D3D9_Device->SetSamplerState(D3DDMAPSAMPLER + 1 + i, D3DSAMP_MINFILTER, state->vertexSampler[i].minFilter);
-        _D3D9_Device->SetSamplerState(D3DDMAPSAMPLER + 1 + i, D3DSAMP_MAGFILTER, state->vertexSampler[i].magFilter);
-        _D3D9_Device->SetSamplerState(D3DDMAPSAMPLER + 1 + i, D3DSAMP_MIPFILTER, state->vertexSampler[i].mipFilter);
+        DWORD sampler = D3DDMAPSAMPLER + 1 + i;
+        _D3D9_Device->SetSamplerState(sampler, D3DSAMP_ADDRESSU, state->vertexSampler[i].addrU);
+        _D3D9_Device->SetSamplerState(sampler, D3DSAMP_ADDRESSV, state->vertexSampler[i].addrV);
+        _D3D9_Device->SetSamplerState(sampler, D3DSAMP_ADDRESSW, state->vertexSampler[i].addrW);
+        _D3D9_Device->SetSamplerState(sampler, D3DSAMP_MINFILTER, state->vertexSampler[i].minFilter);
+        _D3D9_Device->SetSamplerState(sampler, D3DSAMP_MAGFILTER, state->vertexSampler[i].magFilter);
+        _D3D9_Device->SetSamplerState(sampler, D3DSAMP_MIPFILTER, state->vertexSampler[i].mipFilter);
+
+        if (rhi::DeviceCaps().isAnisotropicFilteringSupported())
+        {
+            _D3D9_Device->SetSamplerState(sampler, D3DSAMP_MAXANISOTROPY, state->vertexSampler[i].anisotropyLevel);
+        }
     }
 }
 }

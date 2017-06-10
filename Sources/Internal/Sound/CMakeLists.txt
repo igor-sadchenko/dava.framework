@@ -1,27 +1,9 @@
+set( NAME_MODULE_STUB  Sound )
 
-set( INCLUDES_DIR  ${INCLUDES_DIR} "${PROJECT_SOURCE_DIR}/../../Libs/include/fmod" PARENT_SCOPE )
+set( CPP_FILES         Private/SoundSystem.cpp ) 
+set( CPP_FILES_STUB    Private/*Stub.cpp )#only stub mode
+set( CPP_FILES_IMPL    Private/*Impl.cpp )#only impl mode
 
-if( DISABLE_SOUNDS )
+set( IMPL_MODULE       ${DAVA_ROOT_DIR}/Modules/Sound )
 
-	define_source_files ( 
-	EXTRA_H_FILES   ${CMAKE_CURRENT_LIST_DIR}/SoundEvent.h ${CMAKE_CURRENT_LIST_DIR}/SoundSystem.h  
-	EXTRA_CPP_FILES ${CMAKE_CURRENT_LIST_DIR}/SoundSystemEmpty.cpp
-	GLOB_CPP_PATTERNS null  
-	GLOB_H_PATTERNS   null
-	PARENT_SCOPE )
-	
-else()
-
-	if( IOS )
-	    set( ADDED_CPP_PATTERNS  iOS/*.mm ) 	
-	    set( ADDED_H_PATTERNS    *.hpp iOS/*.h  )
-	    set( ADD_ENGINE_INCLUDES_DIR  ${ADD_ENGINE_INCLUDES_DIR} "${PROJECT_SOURCE_DIR}/Sound/iOS" PARENT_SCOPE )    
-	endif()
-
-	define_source_files (
-	GLOB_CPP_PATTERNS *.cpp ${ADDED_CPP_PATTERNS}
-	GLOB_H_PATTERNS   *.h   ${ADDED_H_PATTERNS}
-        GLOB_ERASE_FILES  SoundSystemEmpty.cpp
-	PARENT_SCOPE )
-
-endif()
+setup_main_module()

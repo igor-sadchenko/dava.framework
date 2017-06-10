@@ -1,39 +1,12 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #include "Platform/Process.h"
 #include "FileSystem/FilePath.h"
+#include "Logger/Logger.h"
 
 #if defined(__DAVAENGINE_WIN32__) || defined(__DAVAENGINE_MACOS__)
 
 #if defined(__DAVAENGINE_MACOS__)
 #include <sys/wait.h>
+#include <unistd.h>
 #endif
 
 static const int READ = 0;
@@ -42,22 +15,34 @@ static const int BUF_SIZE = 512;
 
 namespace DAVA
 {
-Process::Process(const FilePath& path, const Vector<String>& args)
+namespace ProcessDetails
 {
-    pid = -1; //invalid pid
-    output = "[Process::Process] The program has not been started yet!";
-    executablePath = path;
-    runArgs = args;
-    running = false;
-    exitCode = -1; //invalid
+#if defined(__DAVAENGINE_WIN32__)
+String EscapeSpaces(const String& str)
+{
+    if (str.find(' ') == String::npos)
+    {
+        return str;
+    }
 
-#if defined (__DAVAENGINE_WINDOWS__)
+    return String("\"") + str + String("\"");
+}
+#endif //__DAVAENGINE_WIN32__
+}
+
+Process::Process(const FilePath& path, const Vector<String>& args)
+    : output("[Process::Process] The program has not been started yet!")
+    , executablePath(path)
+    , runArgs(args)
+{
+    Logger::FrameworkDebug("Proces: run %s", executablePath.GetAbsolutePathname().c_str());
+    
+#if defined(__DAVAENGINE_WINDOWS__)
     childProcIn[0] = childProcIn[1] = 0;
     childProcOut[0] = childProcOut[1] = 0;
-
-#else
+#else //__DAVAENGINE_WINDOWS__
     pipes[0] = pipes[1] = -1;
-#endif
+#endif //__DAVAENGINE_WINDOWS__
 }
 
 Process::~Process()
@@ -90,7 +75,7 @@ int Process::GetExitCode() const
     return exitCode;
 }
 
-#if defined (__DAVAENGINE_WIN32__)
+#if defined(__DAVAENGINE_WIN32__)
 
 void Process::CleanupHandles()
 {
@@ -135,7 +120,7 @@ bool Process::Run(bool showWindow)
         SECURITY_ATTRIBUTES saAttr;
         saAttr.nLength = sizeof(SECURITY_ATTRIBUTES);
         saAttr.bInheritHandle = TRUE;
-        saAttr.lpSecurityDescriptor = NULL;
+        saAttr.lpSecurityDescriptor = nullptr;
 
         if (::CreatePipe(&childProcOut[READ], &childProcOut[WRITE], &saAttr, 0))
         {
@@ -178,49 +163,48 @@ bool Process::Run(bool showWindow)
         }
 
         // Create the child process.
-
-        String runArgsFlat = "cmd.exe /c ";
-        runArgsFlat += executablePath.GetAbsolutePathname();
-        if (runArgs.size() > 0)
+        String runArgsFlat = "cmd.exe /c \"";
+        runArgsFlat += ProcessDetails::EscapeSpaces(executablePath.GetAbsolutePathname());
+        for (const String& arg : runArgs)
         {
-            for (int i = 0; i < (int)runArgs.size(); ++i)
-            {
-                runArgsFlat += " \"" + runArgs[i] + "\"";
-            }
+            runArgsFlat += " " + ProcessDetails::EscapeSpaces(arg);
         }
+        runArgsFlat += "\"";
 
+        Logger::FrameworkDebug("Run process: %s", runArgsFlat.c_str());
+        
 #if defined(UNICODE)
 
-        wchar_t* execPathW = NULL;
+        wchar_t* execPathW = nullptr;
         size_t execPathWLength = 0;
-        wchar_t* execArgsW = NULL;
+        wchar_t* execArgsW = nullptr;
         size_t execArgsWLength = 0;
 
         //VI: TODO: UNICODE: Use framework methods to convert to Unicode once it will be ready.
         ConvertToWideChar(runArgsFlat, &execArgsW, &execArgsWLength);
 
-        bSuccess = CreateProcess(NULL,
+        bSuccess = CreateProcess(nullptr,
                                  execArgsW, // command line
-                                 NULL, // process security attributes
-                                 NULL, // primary thread security attributes
+                                 nullptr, // process security attributes
+                                 nullptr, // primary thread security attributes
                                  TRUE, // handles are inherited
                                  (showWindow) ? 0 : CREATE_NO_WINDOW, // creation flags
-                                 NULL, // use parent's environment
-                                 NULL, // use parent's current directory
+                                 nullptr, // use parent's environment
+                                 nullptr, // use parent's current directory
                                  &siStartInfo, // STARTUPINFO pointer
                                  &piProcInfo); // receives PROCESS_INFORMATION
 
         SafeDeleteArray(execArgsW);
 
 #else
-        bSuccess = CreateProcess(NULL,
+        bSuccess = CreateProcess(nullptr,
                                  runArgsFlat.c_str(), // command line
-                                 NULL, // process security attributes
-                                 NULL, // primary thread security attributes
+                                 nullptr, // process security attributes
+                                 nullptr, // primary thread security attributes
                                  TRUE, // handles are inherited
                                  (showWindow) ? 0 : CREATE_NO_WINDOW, , // creation flags
-                                 NULL, // use parent's environment
-                                 NULL, // use parent's current directory
+                                 nullptr, // use parent's environment
+                                 nullptr, // use parent's current directory
                                  &siStartInfo, // STARTUPINFO pointer
                                  &piProcInfo); // receives PROCESS_INFORMATION
 
@@ -261,11 +245,11 @@ void Process::Wait()
         DWORD bytesRead = 0;
         BOOL readResult = FALSE;
 
-        readResult = ReadFile(childProcOut[READ], readBuf, BUF_SIZE, &bytesRead, NULL);
+        readResult = ReadFile(childProcOut[READ], readBuf, BUF_SIZE, &bytesRead, nullptr);
         while (bytesRead > 0 && readResult != FALSE)
         {
             output.append(readBuf, bytesRead);
-            readResult = ReadFile(childProcOut[READ], readBuf, BUF_SIZE, &bytesRead, NULL);
+            readResult = ReadFile(childProcOut[READ], readBuf, BUF_SIZE, &bytesRead, nullptr);
         }
     }
 
@@ -287,10 +271,10 @@ void Process::Wait()
 
 void Process::ConvertToWideChar(const String& str, wchar_t** outStr, size_t* outLength)
 {
-    *outStr = NULL;
+    *outStr = nullptr;
     *outLength = 0;
 
-    *outLength = mbstowcs(NULL, str.c_str(), str.size()) + 1;
+    *outLength = mbstowcs(nullptr, str.c_str(), str.size()) + 1;
 
     if (*outLength > 0)
     {
@@ -319,59 +303,55 @@ bool Process::Run(bool showWindow)
         return result;
     }
 
-    String execPath = executablePath.GetAbsolutePathname();
     Vector<char*> execArgs;
 
-    execArgs.push_back(&execPath[0]);
+    String execPath = executablePath.GetAbsolutePathname();
+    execArgs.push_back(const_cast<char*>(execPath.c_str()));
 
-    for (Vector<String>::iterator it = runArgs.begin();
-         it != runArgs.end();
-         ++it)
+    for (const String& arg : runArgs)
     {
-        execArgs.push_back(&(*it)[0]);
+        execArgs.push_back(const_cast<char*>(arg.c_str()));
     }
-
-    execArgs.push_back(NULL);
+    execArgs.push_back(nullptr);
 
     pid = fork();
 
     switch (pid)
     {
     case 0: //child process
-        {
-            close(STDERR_FILENO);
-            close(STDOUT_FILENO);
+    {
+        close(STDERR_FILENO);
+        close(STDOUT_FILENO);
 
-            dup2(pipes[WRITE], STDERR_FILENO);
-            dup2(pipes[WRITE], STDOUT_FILENO);
+        dup2(pipes[WRITE], STDERR_FILENO);
+        dup2(pipes[WRITE], STDOUT_FILENO);
 
-            close(pipes[READ]);
-            pipes[READ] = -1;
+        close(pipes[READ]);
+        pipes[READ] = -1;
 
-            int execResult = execv(execPath.c_str(), &execArgs[0]);
-            DVASSERT(execResult >= 0);
-            _exit(0); //if we got here - there's a problem
-            break;
-        }
+        int execResult = execv(execArgs[0], &execArgs[0]);
+        DVASSERT(execResult >= 0);
+        _exit(0); //if we got here - there's a problem
+    }
 
-        case -1: //error
-        {
-            result = false;
-            Logger::Error("[Process::Run] Failed to start process %s", executablePath.GetAbsolutePathname().c_str());
-            break;
-        }
+    case -1: //error
+    {
+        result = false;
+        Logger::Error("[Process::Run] Failed to start process %s", executablePath.GetAbsolutePathname().c_str());
+        break;
+    }
 
-        default: //parent process
-        {
-            close(pipes[WRITE]);
-            pipes[WRITE] = -1;
+    default: //parent process
+    {
+        close(pipes[WRITE]);
+        pipes[WRITE] = -1;
 
-            running = true;
-            result = true;
-        }
-        };
+        running = true;
+        result = true;
+    }
+    };
 
-        return result;
+    return result;
 }
 
 void Process::Wait()
@@ -384,7 +364,6 @@ void Process::Wait()
     running = false;
 
     int status = 0;
-    //    waitpid(pid, &status, 0); // it is not working on OSX
     int64 pd = -1;
     do
     {
@@ -403,16 +382,13 @@ void Process::Wait()
     }
 
     output = "";
-
     char readBuf[BUF_SIZE];
     int bytesRead = read(pipes[READ], readBuf, BUF_SIZE);
     while (bytesRead > 0)
     {
         output.append(readBuf, bytesRead);
-
         bytesRead = read(pipes[READ], readBuf, BUF_SIZE);
     }
-    //}
 
     CleanupHandles();
 }
@@ -430,7 +406,6 @@ void Process::CleanupHandles()
 }
 
 #endif
-	
 };
 
 #endif

@@ -1,46 +1,22 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
+#include "rhi_GLES2.h"
 
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
+#include "../rhi_Public.h"
 
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
+#include "../Common/rhi_Private.h"
+#include "../Common/rhi_Pool.h"
+#include "../Common/rhi_Utils.h"
+#include "../Common/dbg_StatSet.h"
+#include "../Common/rhi_CommonImpl.h"
 
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-    #include "rhi_GLES2.h"
-
-    #include "../rhi_Public.h"
-
-    #include "../Common/rhi_Private.h"
-    #include "../Common/rhi_Pool.h"
-    #include "../Common/dbg_StatSet.h"
-
-    #include "Debug/DVAssert.h"
-    #include "FileSystem/Logger.h"
+#include "Debug/DVAssert.h"
+#include "Logger/Logger.h"
 using DAVA::Logger;
 
-    #include "_gl.h"
+#include <cstring>
 
-GLuint _GLES2_Binded_FrameBuffer = 0;
+#include "_gl.h"
+
+GLuint _GLES2_Bound_FrameBuffer = 0;
 GLuint _GLES2_Default_FrameBuffer = 0;
 void* _GLES2_Native_Window = nullptr;
 void* _GLES2_Context = nullptr;
@@ -49,23 +25,31 @@ void (*_GLES2_ReleaseContext)() = nullptr;
 int _GLES2_DefaultFrameBuffer_Width = 0;
 int _GLES2_DefaultFrameBuffer_Height = 0;
 GLuint _GLES2_LastSetIB = 0;
+DAVA::uint8* _GLES2_LastSetIndices = nullptr;
 GLuint _GLES2_LastSetVB = 0;
 GLuint _GLES2_LastSetTex0 = 0;
 GLenum _GLES2_LastSetTex0Target = GL_TEXTURE_2D;
 int _GLES2_LastActiveTexture = -1;
+bool _GLES2_IsDebugSupported = true;
 bool _GLES2_IsGlDepth24Stencil8Supported = true;
 bool _GLES2_IsGlDepthNvNonLinearSupported = false;
+bool _GLES2_IsSeamlessCubmapSupported = false;
+bool _GLES2_UseUserProvidedIndices = false;
+bool _GLES2_TimeStampQuerySupported = false;
+volatile bool _GLES2_ValidateNeonCalleeSavedRegisters = false;
 
-#if defined(__DAVAENGINE_WIN32__)
-HDC _GLES2_WindowDC = 0;
+#if defined(__DAVAENGINE_ANDROID__) && defined(__DAVAENGINE_ARM_7__)
+volatile GLCallRegisters gl_call_registers;
 #endif
+
+
+#define ENABLE_DEBUG_OUTPUT 0
 
 namespace rhi
 {
 //==============================================================================
 
-static bool _Inited = false;
-Dispatch DispatchGLES2 = { 0 };
+Dispatch DispatchGLES2 = {};
 
 static bool ATC_Supported = false;
 static bool PVRTC_Supported = false;
@@ -76,28 +60,19 @@ static bool EAC_Supported = false;
 static bool DXT_Supported = false;
 static bool Float_Supported = false;
 static bool Half_Supported = false;
-
-static RenderDeviceCaps _GLES2_DeviceCaps = {};
+static bool RG_Supported = false;
+static bool Short_Int_Supported = false;
 
 //------------------------------------------------------------------------------
 
-static Api
-gles2_HostApi()
+static Api gles2_HostApi()
 {
     return RHI_GLES2;
 }
 
 //------------------------------------------------------------------------------
 
-static const RenderDeviceCaps& gles2_DeviceCaps()
-{
-    return _GLES2_DeviceCaps;
-}
-
-//------------------------------------------------------------------------------
-
-static bool
-gles2_TextureFormatSupported(TextureFormat format)
+static bool gles2_TextureFormatSupported(TextureFormat format, ProgType)
 {
     bool supported = false;
 
@@ -120,11 +95,26 @@ gles2_TextureFormatSupported(TextureFormat format)
         break;
 
     case TEXTURE_FORMAT_A16R16G16B16:
+    case TEXTURE_FORMAT_A32R32G32B32:
+        supported = Short_Int_Supported;
+        break;
+
+    case TEXTURE_FORMAT_RGBA16F:
         supported = Half_Supported;
         break;
 
-    case TEXTURE_FORMAT_A32R32G32B32:
+    case TEXTURE_FORMAT_RGBA32F:
         supported = Float_Supported;
+        break;
+
+    case TEXTURE_FORMAT_R16F:
+    case TEXTURE_FORMAT_RG16F:
+        supported = Half_Supported && RG_Supported;
+        break;
+
+    case TEXTURE_FORMAT_R32F:
+    case TEXTURE_FORMAT_RG32F:
+        supported = Float_Supported && RG_Supported;
         break;
 
     case TEXTURE_FORMAT_PVRTC_4BPP_RGBA:
@@ -169,10 +159,9 @@ gles2_TextureFormatSupported(TextureFormat format)
     return supported;
 }
 
-static void
-gles_check_GL_extensions()
+static void gles_check_GL_extensions()
 {
-    const char* ext = (const char*)glGetString(GL_EXTENSIONS);
+    const char* ext = reinterpret_cast<const char*>(glGetString(GL_EXTENSIONS));
 
     if (!IsEmptyString(ext))
     {
@@ -183,12 +172,17 @@ gles_check_GL_extensions()
         ETC2_Supported = strstr(ext, "GL_OES_compressed_ETC2_RGB8_texture") != nullptr;
         EAC_Supported = ETC2_Supported;
         DXT_Supported = (strstr(ext, "GL_EXT_texture_compression_s3tc") != nullptr) || (strstr(ext, "GL_NV_texture_compression_s3tc") != nullptr);
-        Float_Supported = strstr(ext, "GL_OES_texture_float") != nullptr;
-        Half_Supported = strstr(ext, "GL_OES_texture_half_float") != nullptr;
 
-        _GLES2_DeviceCaps.is32BitIndicesSupported = strstr(ext, "GL_OES_element_index_uint") != nullptr;
-        _GLES2_DeviceCaps.isVertexTextureUnitsSupported = strstr(ext, "GL_EXT_shader_texture_lod") != nullptr;
-        _GLES2_DeviceCaps.isFramebufferFetchSupported = strstr(ext, "GL_EXT_shader_framebuffer_fetch") != nullptr;
+        Float_Supported = strstr(ext, "GL_OES_texture_float") != nullptr || strstr(ext, "ARB_texture_float") != nullptr;
+        Half_Supported = strstr(ext, "GL_OES_texture_half_float") != nullptr || strstr(ext, "ARB_texture_float") != nullptr;
+        RG_Supported = strstr(ext, "EXT_texture_rg") != nullptr || strstr(ext, "ARB_texture_rg") != nullptr;
+
+        MutableDeviceCaps::Get().is32BitIndicesSupported = strstr(ext, "GL_OES_element_index_uint") != nullptr;
+        MutableDeviceCaps::Get().isVertexTextureUnitsSupported = strstr(ext, "GL_EXT_shader_texture_lod") != nullptr;
+        MutableDeviceCaps::Get().isFramebufferFetchSupported = strstr(ext, "GL_EXT_shader_framebuffer_fetch") != nullptr;
+        MutableDeviceCaps::Get().isInstancingSupported =
+        (strstr(ext, "GL_EXT_draw_instanced") || strstr(ext, "GL_ARB_draw_instanced") || strstr(ext, "GL_ARB_draw_elements_base_vertex")) &&
+        (strstr(ext, "GL_EXT_instanced_arrays") || strstr(ext, "GL_ARB_instanced_arrays"));
 
 #if defined(__DAVAENGINE_ANDROID__)
         _GLES2_IsGlDepth24Stencil8Supported = (strstr(ext, "GL_DEPTH24_STENCIL8") != nullptr) || (strstr(ext, "GL_OES_packed_depth_stencil") != nullptr) || (strstr(ext, "GL_EXT_packed_depth_stencil") != nullptr);
@@ -196,111 +190,205 @@ gles_check_GL_extensions()
         _GLES2_IsGlDepth24Stencil8Supported = true;
 #endif
 
+        _GLES2_IsDebugSupported = strstr(ext, "GL_KHR_debug") != nullptr;
         _GLES2_IsGlDepthNvNonLinearSupported = strstr(ext, "GL_DEPTH_COMPONENT16_NONLINEAR_NV") != nullptr;
+        _GLES2_IsSeamlessCubmapSupported = strstr(ext, "GL_ARB_seamless_cube_map") != nullptr;
+
+#if defined(__DAVAENGINE_WIN32__) || defined(__DAVAENGINE_MACOS__)
+        if (_GLES2_IsSeamlessCubmapSupported)
+            glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+#endif
+        if (strstr(ext, "EXT_texture_filter_anisotropic") != nullptr)
+        {
+            float32 value = 0.0f;
+            glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, &value);
+            MutableDeviceCaps::Get().maxAnisotropy = static_cast<DAVA::uint32>(value);
+        }
+
+        _GLES2_TimeStampQuerySupported = strstr(ext, "ARB_timer_query") != nullptr || strstr(ext, "EXT_disjoint_timer_query") != nullptr;
+        MutableDeviceCaps::Get().isPerfQuerySupported = strstr(ext, "EXT_timer_query") != nullptr || _GLES2_TimeStampQuerySupported;
     }
 
-    const char* version = (const char*)glGetString(GL_VERSION);
+    int majorVersion = 2;
+    int minorVersion = 0;
+    const char* version = reinterpret_cast<const char*>(glGetString(GL_VERSION));
     if (!IsEmptyString(version))
     {
+        DAVA::Logger::Info("OpenGL version: %s", version);
+
+        const char* dotChar = strchr(version, '.');
+        if (dotChar && dotChar != version && *(dotChar + 1))
+        {
+            majorVersion = atoi(dotChar - 1);
+            minorVersion = atoi(dotChar + 1);
+        }
+
         if (strstr(version, "OpenGL ES"))
         {
-            const char* dotChar = strchr(version, '.');
-            if (dotChar && dotChar != version)
+            if (majorVersion >= 3)
             {
-                int majorVersion = atoi(dotChar - 1);
-                if (majorVersion >= 3)
-                {
-                    _GLES2_DeviceCaps.is32BitIndicesSupported = true;
-                    _GLES2_DeviceCaps.isVertexTextureUnitsSupported = true;
-                }
+                MutableDeviceCaps::Get().is32BitIndicesSupported = true;
+                MutableDeviceCaps::Get().isVertexTextureUnitsSupported = true;
+                MutableDeviceCaps::Get().isInstancingSupported = true;
+                Short_Int_Supported = true;
             }
+
+#ifdef __DAVAENGINE_ANDROID__
+            GET_GL_FUNC(glDrawElementsInstanced, "EXT");
+            GET_GL_FUNC(glDrawArraysInstanced, "EXT");
+            GET_GL_FUNC(glVertexAttribDivisor, "EXT");
+
+            GET_GL_FUNC(glRenderbufferStorageMultisample, "EXT");
+            GET_GL_FUNC(glBlitFramebuffer, "EXT");
+
+            GET_GL_FUNC(glDebugMessageControl, "KHR");
+            GET_GL_FUNC(glDebugMessageCallback, "KHR");
+
+            GET_GL_FUNC(glGenQueries, "EXT");
+            GET_GL_FUNC(glDeleteQueries, "EXT");
+            GET_GL_FUNC(glBeginQuery, "EXT");
+            GET_GL_FUNC(glEndQuery, "EXT");
+            GET_GL_FUNC(glGetQueryObjectuiv, "EXT");
+            GET_GL_FUNC(glQueryCounter, "EXT");
+            GET_GL_FUNC(glGetQueryObjectui64v, "EXT");
+#endif
         }
         else
         {
-            _GLES2_DeviceCaps.is32BitIndicesSupported = true;
-            _GLES2_DeviceCaps.isVertexTextureUnitsSupported = true;
-            _GLES2_DeviceCaps.isFramebufferFetchSupported = true;
+            MutableDeviceCaps::Get().is32BitIndicesSupported = true;
+            MutableDeviceCaps::Get().isVertexTextureUnitsSupported = true;
+            MutableDeviceCaps::Get().isFramebufferFetchSupported = false;
+            MutableDeviceCaps::Get().isInstancingSupported |= (majorVersion > 3) && (minorVersion > 3);
+
+            if (majorVersion >= 3)
+            {
+                if ((majorVersion > 3) || (minorVersion >= 2))
+                    _GLES2_IsSeamlessCubmapSupported = true;
+
+                if ((majorVersion > 3) || (minorVersion >= 3))
+                {
+                    _GLES2_TimeStampQuerySupported = true;
+                    MutableDeviceCaps::Get().isPerfQuerySupported = true;
+                }
+            }
+
+            Float_Supported |= majorVersion >= 3;
+            Half_Supported |= majorVersion >= 3;
+            RG_Supported |= majorVersion >= 3;
+            Short_Int_Supported = true;
         }
     }
-}
 
-//------------------------------------------------------------------------------
-#if defined(__DAVAENGINE_WIN32__)
-
-static void GLAPIENTRY
-_OGLErrorCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userdata)
-{
-    /*
-    const char* ssource     = "unknown";
-    const char* stype       = "unknown";
-    const char* sseverity   = "unknown";
-
-    switch( source )
+#ifdef __DAVAENGINE_ANDROID__
+    if (_GLES2_TimeStampQuerySupported)
     {
-        case GL_DEBUG_SOURCE_API                : ssource = "API"; break;
-        case GL_DEBUG_SOURCE_WINDOW_SYSTEM      : ssource = "window system"; break;
-        case GL_DEBUG_SOURCE_SHADER_COMPILER    : ssource = "shader compiler"; break;
-        case GL_DEBUG_SOURCE_THIRD_PARTY        : ssource = "third party"; break;
-        case GL_DEBUG_SOURCE_APPLICATION        : ssource = "application"; break;
-        case GL_DEBUG_SOURCE_OTHER              : ssource = "other"; break;
-        default                                 : ssource= "unknown"; break;
+        //some driver returns available timestamp-query extension but not implement it
+
+        GLuint query = 0;
+        if (glGenQueries)
+            GL_CALL(glGenQueries(1, &query));
+
+        if (query)
+        {
+            GLuint64 ts = 0;
+
+            if (glQueryCounter)
+                GL_CALL(glQueryCounter(query, GL_TIMESTAMP));
+
+            GL_CALL(glFinish());
+
+            if (glGetQueryObjectui64v)
+                GL_CALL(glGetQueryObjectui64v(query, GL_QUERY_RESULT, &ts));
+
+            if (glDeleteQueries)
+                GL_CALL(glDeleteQueries(1, &query));
+
+            MutableDeviceCaps::Get().isPerfQuerySupported = _GLES2_TimeStampQuerySupported = (ts != 0);
+        }
     }
+#endif
+
+    bool runningOnTegra = false;
+    bool runningOnMali = false;
+    const char* renderer = reinterpret_cast<const char*>(glGetString(GL_RENDERER));
+    if (!IsEmptyString(renderer))
+    {
+        std::strncpy(MutableDeviceCaps::Get().deviceDescription, renderer, 127);
+        runningOnMali = strstr(renderer, "Mali") != nullptr;
+        runningOnTegra = strcmp(renderer, "NVIDIA Tegra") == 0;
+    }
+
+    GLint maxSamples = 1;
     
-    switch( type )
-    {
-        case GL_DEBUG_TYPE_ERROR                : stype = "error"; break;
-        case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR  : stype = "deprecated behaviour"; break;
-        case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR   : stype = "undefined behaviour"; break;
-        case GL_DEBUG_TYPE_PORTABILITY          : stype = "portabiliy"; break;
-        case GL_DEBUG_TYPE_PERFORMANCE          : stype = "performance"; break;
-        case GL_DEBUG_TYPE_OTHER                : stype = "other"; break;
-        default                                 : stype = "unknown"; break;
-    }
-    
-    switch( severity )
-    {
-        case GL_DEBUG_SEVERITY_HIGH             : sseverity = "high"; break;
-        case GL_DEBUG_SEVERITY_MEDIUM           : sseverity = "medium"; break;
-        case GL_DEBUG_SEVERITY_LOW              : sseverity = "low"; break;
-        case GL_DEBUG_SEVERITY_NOTIFICATION     : sseverity = "notification"; break;
-        default                                 : sseverity = "unknown"; break;
-    }
-*/
-    if (type == GL_DEBUG_TYPE_PERFORMANCE)
-        Trace("[gl.warning] %s\n", message);
-    else if (type == GL_DEBUG_TYPE_ERROR)
-        Trace("[gl.error] %s\n", message);
-    //    else
-    //        Logger::Info( "[gl] %s\n", message );
-}
+#ifdef __DAVAENGINE_ANDROID__ // hacks and workarounds for beautiful Android
 
-#endif // defined(__DAVAENGINE_WIN32__)
+    // drawing from memory is worst case scenario,
+    // unless running on some buggy piece of shit
+    _GLES2_UseUserProvidedIndices = runningOnMali;
+
+    // Without offensive language:
+    // it seems like some GL-functions in SHIELD driver implementation
+    // corrupt 'callee-saved' Neon registers (q4-q7).
+    // So, we just restore it after any GL-call.
+    _GLES2_ValidateNeonCalleeSavedRegisters = runningOnTegra;
+
+    // allow multisampling only on NVIDIA Tegra GPU
+    // and if functions were loaded
+    if (runningOnTegra && (majorVersion >= 3) && (glRenderbufferStorageMultisample != nullptr) && (glBlitFramebuffer != nullptr))
+#endif
+    {
+        GL_CALL(glGetIntegerv(GL_MAX_SAMPLES, &maxSamples));
+        DAVA::Logger::Info("GL_MAX_SAMPLES -> %d", maxSamples);
+    }
+
+    MutableDeviceCaps::Get().maxSamples = static_cast<uint32>(maxSamples);
+
+    GLint maxTextureSize = 1024;
+    GL_CALL(glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTextureSize));
+    MutableDeviceCaps::Get().maxTextureSize = maxTextureSize;
+}
 
 //------------------------------------------------------------------------------
 
 void gles2_Uninitialize()
 {
-    UninitializeRenderThreadGLES2();
+    //TODO: release GL resources
+    //now it's crash cause Qt context deleted before uninit renderer
+    //QueryBufferGLES2::ReleaseQueryObjectsPool();
+    //PerfQueryGLES2::ReleaseQueryObjectsPool();
 }
 
 //------------------------------------------------------------------------------
 
-static void
-gles2_Reset(const ResetParam& param)
+static void gles2_Reset(const ResetParam& param)
 {
+#if defined(__DAVAENGINE_ANDROID__)
+    android_gl_reset(param.window, GLint(param.width), GLint(param.height));
+#elif defined(__DAVAENGINE_IPHONE__)
+    ios_gl_reset(param.window, GLint(param.width), GLint(param.height));
+#elif defined(__DAVAENGINE_MACOS__)
+    macos_gl_reset(param);
+#elif defined(__DAVAENGINE_WIN32__)
+    win_gl_reset(param);
+#else
     _GLES2_DefaultFrameBuffer_Width = param.width;
     _GLES2_DefaultFrameBuffer_Height = param.height;
-#if defined(__DAVAENGINE_ANDROID__)
-    android_gl_reset(param.window);
 #endif
 }
 
 //------------------------------------------------------------------------------
 
-static void
-gles2_InvalidateCache()
+static void gles2_InvalidateCache()
 {
     PipelineStateGLES2::InvalidateCache();
+    DepthStencilStateGLES2::InvalidateCache();
+    TextureGLES2::InvalidateCache();
+}
+
+static void gles2_SynchronizeCPUGPU(uint64* cpuTimestamp, uint64* gpuTimestamp)
+{
+    GLCommand cmd = { GLCommand::SYNC_CPU_GPU, { uint64(cpuTimestamp), uint64(gpuTimestamp) } };
+    ExecGL(&cmd, 1);
 }
 
 //------------------------------------------------------------------------------
@@ -313,410 +401,121 @@ gles2_NeedRestoreResources()
     return needRestore;
 }
 
-//------------------------------------------------------------------------------
+static bool gles2_CheckSurface()
+{    
+#if defined __DAVAENGINE_ANDROID__
+    return android_gl_checkSurface();
+#elif defined __DAVAENGINE_IPHONE__
+    return ios_gl_check_layer();
+#else
+    return true;
+#endif
+}
+
+static void gles2_Suspend()
+{
+    GL_CALL(glFinish());
+}
+
 
 #if defined(__DAVAENGINE_WIN32__)
-
-void wgl_AcquireContext()
+void GLAPIENTRY gl_debug_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userdata)
 {
-    wglMakeCurrent(_GLES2_WindowDC, (HGLRC)_GLES2_Context);
-}
+#if 0    
+    const char* ssource     = "unknown";
+    const char* stype       = "unknown";
+    const char* sseverity   = "unknown";
 
-void wgl_ReleaseContext()
-{
-    wglMakeCurrent(NULL, NULL);
-}
-
-void gles2_Initialize(const InitParam& param)
-{
-    _GLES2_Native_Window = param.window;
-
-    bool success = false;
-
-    if (_GLES2_Native_Window)
+    switch( source )
     {
-        _GLES2_WindowDC = ::GetDC((HWND)_GLES2_Native_Window);
-
-        DVASSERT(!_Inited);
-
-        PIXELFORMATDESCRIPTOR pfd =
-        {
-          sizeof(PIXELFORMATDESCRIPTOR), // size of this pfd
-          1, // version number
-          PFD_DRAW_TO_WINDOW | // support window
-          PFD_SUPPORT_OPENGL | // support OpenGL
-          PFD_DOUBLEBUFFER, // double buffered
-          PFD_TYPE_RGBA, // RGBA type
-          32, // 32-bit color depth
-          0,
-          0, 0, 0, 0, 0, // color bits ignored
-
-          0, // no alpha buffer
-          0, // shift bit ignored
-          0, // no accumulation buffer
-          0, 0, 0, 0, // accum bits ignored
-          24, // 24-bit z-buffer
-          8, // 8-bit stencil buffer
-          0, // no auxiliary buffer
-          PFD_MAIN_PLANE, // main layer
-
-          0, // reserved
-          0, 0, 0 // layer masks ignored
-        };
-        int pixel_format = ChoosePixelFormat(_GLES2_WindowDC, &pfd);
-        SetPixelFormat(_GLES2_WindowDC, pixel_format, &pfd);
-        SetMapMode(_GLES2_WindowDC, MM_TEXT);
-
-        HGLRC ctx = wglCreateContext(_GLES2_WindowDC);
-
-        if (ctx)
-        {
-            Logger::Info("GL-context created\n");
-
-            GLint attr[] =
-            {
-              // here we ask for OpenGL version
-              WGL_CONTEXT_MAJOR_VERSION_ARB, 3,
-              WGL_CONTEXT_MINOR_VERSION_ARB, 2,
-              // forward compatibility mode
-              WGL_CONTEXT_FLAGS_ARB, WGL_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB,
-              // uncomment this for Compatibility profile
-              WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
-              // we are using Core profile here
-              WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
-              0
-            };
-
-            wglMakeCurrent(_GLES2_WindowDC, ctx);
-            glewExperimental = false;
-
-            if (glewInit() == GLEW_OK)
-            {
-                HGLRC ctx4 = 0; //wglCreateContextAttribsARB( _GLES2_WindowDC, 0, attr );
-                if (ctx4 && wglMakeCurrent(_GLES2_WindowDC, ctx4))
-                {
-                    wglDeleteContext(ctx);
-                    Logger::Info("using GL %i.%i", attr[1], attr[3]);
-                    _GLES2_Context = (void*)ctx4;
-                }
-                else
-                {
-                    _GLES2_Context = (void*)ctx;
-                }
-
-                _GLES2_AcquireContext = &wgl_AcquireContext;
-                _GLES2_ReleaseContext = &wgl_ReleaseContext;
-
-                success = true;
-            }
-            else
-            {
-                Logger::Error("GLEW init failed\n");
-            }
-        }
-        else
-        {
-            Logger::Error("can't create GL-context");
-        }
-    }
-    else
-    {
-        _GLES2_AcquireContext = param.acquireContextFunc;
-        _GLES2_ReleaseContext = param.releaseContextFunc;
-        if (glewInit() == GLEW_OK)
-            success = true;
+    case GL_DEBUG_SOURCE_API                : ssource = "API"; break;
+    case GL_DEBUG_SOURCE_WINDOW_SYSTEM      : ssource = "window system"; break;
+    case GL_DEBUG_SOURCE_SHADER_COMPILER    : ssource = "shader compiler"; break;
+    case GL_DEBUG_SOURCE_THIRD_PARTY        : ssource = "third party"; break;
+    case GL_DEBUG_SOURCE_APPLICATION        : ssource = "application"; break;
+    case GL_DEBUG_SOURCE_OTHER              : ssource = "other"; break;
+    default                                 : ssource= "unknown"; break;
     }
 
-    DVASSERT(_GLES2_AcquireContext);
-    DVASSERT(_GLES2_ReleaseContext);
-
-    if (success)
+    switch( type )
     {
-        VertexBufferGLES2::SetupDispatch(&DispatchGLES2);
-        IndexBufferGLES2::SetupDispatch(&DispatchGLES2);
-        QueryBufferGLES2::SetupDispatch(&DispatchGLES2);
-        TextureGLES2::SetupDispatch(&DispatchGLES2);
-        PipelineStateGLES2::SetupDispatch(&DispatchGLES2);
-        ConstBufferGLES2::SetupDispatch(&DispatchGLES2);
-        DepthStencilStateGLES2::SetupDispatch(&DispatchGLES2);
-        SamplerStateGLES2::SetupDispatch(&DispatchGLES2);
-        RenderPassGLES2::SetupDispatch(&DispatchGLES2);
-        CommandBufferGLES2::SetupDispatch(&DispatchGLES2);
+    case GL_DEBUG_TYPE_ERROR                : stype = "error"; break;
+    case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR  : stype = "deprecated behavior"; break;
+    case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR   : stype = "undefined behavior"; break;
+    case GL_DEBUG_TYPE_PORTABILITY          : stype = "portability"; break;
+    case GL_DEBUG_TYPE_PERFORMANCE          : stype = "performance"; break;
+    case GL_DEBUG_TYPE_OTHER                : stype = "other"; break;
+    default                                 : stype = "unknown"; break;
+    }
 
-        DispatchGLES2.impl_Reset = &gles2_Reset;
-        DispatchGLES2.impl_Uninitialize = &gles2_Uninitialize;
-        DispatchGLES2.impl_HostApi = &gles2_HostApi;
-        DispatchGLES2.impl_TextureFormatSupported = &gles2_TextureFormatSupported;
-        DispatchGLES2.impl_DeviceCaps = &gles2_DeviceCaps;
-        DispatchGLES2.impl_NeedRestoreResources = &gles2_NeedRestoreResources;
-        DispatchGLES2.impl_ResumeRendering = &ResumeGLES2;
-        DispatchGLES2.impl_SuspendRendering = &SuspendGLES2;
-        DispatchGLES2.impl_InvalidateCache = &gles2_InvalidateCache;
-
-        SetDispatchTable(DispatchGLES2);
-
-        gles_check_GL_extensions();
-
-        if (param.maxVertexBufferCount)
-            VertexBufferGLES2::Init(param.maxVertexBufferCount);
-        if (param.maxIndexBufferCount)
-            IndexBufferGLES2::Init(param.maxIndexBufferCount);
-        if (param.maxConstBufferCount)
-            ConstBufferGLES2::Init(param.maxConstBufferCount);
-        if (param.maxTextureCount)
-            TextureGLES2::Init(param.maxTextureCount);
-
-        if (param.maxTextureSetCount)
-            InitTextreSetPool(param.maxTextureSetCount);
-        if (param.maxSamplerStateCount)
-            SamplerStateGLES2::Init(param.maxSamplerStateCount);
-        if (param.maxPipelineStateCount)
-            PipelineStateGLES2::Init(param.maxPipelineStateCount);
-        if (param.maxDepthStencilStateCount)
-            DepthStencilStateGLES2::Init(param.maxDepthStencilStateCount);
-        if (param.maxRenderPassCount)
-            RenderPassGLES2::Init(param.maxRenderPassCount);
-        if (param.maxCommandBuffer)
-            CommandBufferGLES2::Init(param.maxCommandBuffer);
-        if (param.maxPacketListCount)
-            InitPacketListPool(param.maxPacketListCount);
-
-        uint32 ringBufferSize = 4 * 1024 * 1024;
-        if (param.shaderConstRingBufferSize)
-            ringBufferSize = param.shaderConstRingBufferSize;
-        ConstBufferGLES2::InitializeRingBuffer(ringBufferSize);
-
-        Logger::Info("GL inited\n");
-        Logger::Info("  GL version   : %s", glGetString(GL_VERSION));
-        Logger::Info("  GPU vendor   : %s", glGetString(GL_VENDOR));
-        Logger::Info("  GPU          : %s", glGetString(GL_RENDERER));
-        Logger::Info("  GLSL version : %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
-
-#if 1
-        glEnable(GL_DEBUG_OUTPUT);
-        glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, 0, GL_TRUE);
-        glDebugMessageCallback(&_OGLErrorCallback, 0);
+    switch( severity )
+    {
+    case GL_DEBUG_SEVERITY_HIGH             : sseverity = "high"; break;
+    case GL_DEBUG_SEVERITY_MEDIUM           : sseverity = "medium"; break;
+    case GL_DEBUG_SEVERITY_LOW              : sseverity = "low"; break;
+    case GL_DEBUG_SEVERITY_NOTIFICATION     : sseverity = "notification"; break;
+    default                                 : sseverity = "unknown"; break;
+    }
 #endif
-
-        stat_DIP = StatSet::AddStat("rhi'dip", "dip");
-        stat_DP = StatSet::AddStat("rhi'dp", "dp");
-        stat_DTL = StatSet::AddStat("rhi'dtl", "dtl");
-        stat_DTS = StatSet::AddStat("rhi'dts", "dts");
-        stat_DLL = StatSet::AddStat("rhi'dll", "dll");
-        stat_SET_PS = StatSet::AddStat("rhi'set-ps", "set-ps");
-        stat_SET_SS = StatSet::AddStat("rhi'set-ss", "set-ss");
-        stat_SET_TEX = StatSet::AddStat("rhi'set-tex", "set-tex");
-        stat_SET_CB = StatSet::AddStat("rhi'set-cb", "set-cb");
-        stat_SET_VB = StatSet::AddStat("rhi'set-vb", "set-vb");
-        stat_SET_IB = StatSet::AddStat("rhi'set-ib", "set-ib");
-
-        RECT rc;
-
-        GetClientRect((HWND)_GLES2_Native_Window, &rc);
-        _GLES2_DefaultFrameBuffer_Width = rc.right - rc.left;
-        _GLES2_DefaultFrameBuffer_Height = rc.bottom - rc.top;
-
-        InitializeRenderThreadGLES2((param.threadedRenderEnabled) ? param.threadedRenderFrameCount : 0);
-
-        _Inited = true;
-    }
+    if (type == GL_DEBUG_TYPE_PERFORMANCE)
+        Trace("[gl.warning] %s\n", message);
+    else if (type == GL_DEBUG_TYPE_ERROR)
+        Trace("[gl.error] %s\n", message);
+    //    else
+    //        Logger::Info( "[gl] %s\n", message );
 }
-
-#elif defined(__DAVAENGINE_MACOS__)
-
-void gles2_Initialize(const InitParam& param)
-{
-    macos_gl_init(param.window);
-
-    _GLES2_AcquireContext = (param.acquireContextFunc) ? param.acquireContextFunc : &macos_gl_acquire_context;
-    _GLES2_ReleaseContext = (param.releaseContextFunc) ? param.releaseContextFunc : &macos_gl_release_context;
-
-    if (param.maxVertexBufferCount)
-        VertexBufferGLES2::Init(param.maxVertexBufferCount);
-    if (param.maxIndexBufferCount)
-        IndexBufferGLES2::Init(param.maxIndexBufferCount);
-    if (param.maxConstBufferCount)
-        ConstBufferGLES2::Init(param.maxConstBufferCount);
-    if (param.maxTextureCount)
-        TextureGLES2::Init(param.maxTextureCount);
-
-    if (param.maxTextureSetCount)
-        InitTextreSetPool(param.maxTextureSetCount);
-    if (param.maxSamplerStateCount)
-        SamplerStateGLES2::Init(param.maxSamplerStateCount);
-    if (param.maxPipelineStateCount)
-        PipelineStateGLES2::Init(param.maxPipelineStateCount);
-    if (param.maxDepthStencilStateCount)
-        DepthStencilStateGLES2::Init(param.maxDepthStencilStateCount);
-    if (param.maxRenderPassCount)
-        RenderPassGLES2::Init(param.maxRenderPassCount);
-    if (param.maxCommandBuffer)
-        CommandBufferGLES2::Init(param.maxCommandBuffer);
-    if (param.maxPacketListCount)
-        InitPacketListPool(param.maxPacketListCount);
-
-    uint32 ringBufferSize = 4 * 1024 * 1024;
-    if (param.shaderConstRingBufferSize)
-        ringBufferSize = param.shaderConstRingBufferSize;
-    ConstBufferGLES2::InitializeRingBuffer(ringBufferSize);
-
-    _Inited = true;
-
-    Logger::Info("GL inited");
-    Logger::Info("  GL version   : %s", glGetString(GL_VERSION));
-    Logger::Info("  GPU vendor   : %s", glGetString(GL_VENDOR));
-    Logger::Info("  GPU          : %s", glGetString(GL_RENDERER));
-    Logger::Info("  GLSL version : %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
-
-    VertexBufferGLES2::SetupDispatch(&DispatchGLES2);
-    IndexBufferGLES2::SetupDispatch(&DispatchGLES2);
-    QueryBufferGLES2::SetupDispatch(&DispatchGLES2);
-    TextureGLES2::SetupDispatch(&DispatchGLES2);
-    PipelineStateGLES2::SetupDispatch(&DispatchGLES2);
-    ConstBufferGLES2::SetupDispatch(&DispatchGLES2);
-    DepthStencilStateGLES2::SetupDispatch(&DispatchGLES2);
-    SamplerStateGLES2::SetupDispatch(&DispatchGLES2);
-    RenderPassGLES2::SetupDispatch(&DispatchGLES2);
-    CommandBufferGLES2::SetupDispatch(&DispatchGLES2);
-
-    DispatchGLES2.impl_Reset = &gles2_Reset;
-    DispatchGLES2.impl_Uninitialize = &gles2_Uninitialize;
-    DispatchGLES2.impl_HostApi = &gles2_HostApi;
-    DispatchGLES2.impl_TextureFormatSupported = &gles2_TextureFormatSupported;
-    DispatchGLES2.impl_DeviceCaps = &gles2_DeviceCaps;
-    DispatchGLES2.impl_NeedRestoreResources = &gles2_NeedRestoreResources;
-    DispatchGLES2.impl_ResumeRendering = &ResumeGLES2;
-    DispatchGLES2.impl_SuspendRendering = &SuspendGLES2;
-    DispatchGLES2.impl_InvalidateCache = &gles2_InvalidateCache;
-
-    SetDispatchTable(DispatchGLES2);
-
-    gles_check_GL_extensions();
-
-    InitializeRenderThreadGLES2((param.threadedRenderEnabled) ? param.threadedRenderFrameCount : 0);
-
-    #if 0
-    glEnable(GL_DEBUG_OUTPUT);
-    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, 0, GL_TRUE);
-    glDebugMessageCallback(&_OGLErrorCallback, 0);
-    #endif
-
-    stat_DIP = StatSet::AddStat("rhi'dip", "dip");
-    stat_DP = StatSet::AddStat("rhi'dp", "dp");
-    stat_DTL = StatSet::AddStat("rhi'dtl", "dtl");
-    stat_DTS = StatSet::AddStat("rhi'dts", "dts");
-    stat_DLL = StatSet::AddStat("rhi'dll", "dll");
-    stat_SET_PS = StatSet::AddStat("rhi'set-ps", "set-ps");
-    stat_SET_SS = StatSet::AddStat("rhi'set-ss", "set-ss");
-    stat_SET_TEX = StatSet::AddStat("rhi'set-tex", "set-tex");
-    stat_SET_CB = StatSet::AddStat("rhi'set-cb", "set-cb");
-    stat_SET_VB = StatSet::AddStat("rhi'set-vb", "set-vb");
-    stat_SET_IB = StatSet::AddStat("rhi'set-ib", "set-ib");
-}
-
-#elif defined(__DAVAENGINE_IPHONE__)
-
-void gles2_Initialize(const InitParam& param)
-{
-    ios_gl_init(param.window);
-
-    _GLES2_AcquireContext = (param.acquireContextFunc) ? param.acquireContextFunc : &ios_gl_acquire_context;
-    _GLES2_ReleaseContext = (param.releaseContextFunc) ? param.releaseContextFunc : &ios_gl_release_context;
-
-    if (param.maxVertexBufferCount)
-        VertexBufferGLES2::Init(param.maxVertexBufferCount);
-    if (param.maxIndexBufferCount)
-        IndexBufferGLES2::Init(param.maxIndexBufferCount);
-    if (param.maxConstBufferCount)
-        ConstBufferGLES2::Init(param.maxConstBufferCount);
-    if (param.maxTextureCount)
-        TextureGLES2::Init(param.maxTextureCount);
-
-    if (param.maxTextureSetCount)
-        InitTextreSetPool(param.maxTextureSetCount);
-    if (param.maxSamplerStateCount)
-        SamplerStateGLES2::Init(param.maxSamplerStateCount);
-    if (param.maxPipelineStateCount)
-        PipelineStateGLES2::Init(param.maxPipelineStateCount);
-    if (param.maxDepthStencilStateCount)
-        DepthStencilStateGLES2::Init(param.maxDepthStencilStateCount);
-    if (param.maxRenderPassCount)
-        RenderPassGLES2::Init(param.maxRenderPassCount);
-    if (param.maxCommandBuffer)
-        CommandBufferGLES2::Init(param.maxCommandBuffer);
-    if (param.maxPacketListCount)
-        InitPacketListPool(param.maxPacketListCount);
-
-    uint32 ringBufferSize = 4 * 1024 * 1024;
-    if (param.shaderConstRingBufferSize)
-        ringBufferSize = param.shaderConstRingBufferSize;
-    ConstBufferGLES2::InitializeRingBuffer(ringBufferSize);
-
-    _Inited = true;
-
-    Logger::Info("GL inited");
-    Logger::Info("  GL version   : %s", glGetString(GL_VERSION));
-    Logger::Info("  GPU vendor   : %s", glGetString(GL_VENDOR));
-    Logger::Info("  GPU          : %s", glGetString(GL_RENDERER));
-    Logger::Info("  GLSL version : %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
-
-    VertexBufferGLES2::SetupDispatch(&DispatchGLES2);
-    IndexBufferGLES2::SetupDispatch(&DispatchGLES2);
-    QueryBufferGLES2::SetupDispatch(&DispatchGLES2);
-    TextureGLES2::SetupDispatch(&DispatchGLES2);
-    PipelineStateGLES2::SetupDispatch(&DispatchGLES2);
-    ConstBufferGLES2::SetupDispatch(&DispatchGLES2);
-    DepthStencilStateGLES2::SetupDispatch(&DispatchGLES2);
-    SamplerStateGLES2::SetupDispatch(&DispatchGLES2);
-    RenderPassGLES2::SetupDispatch(&DispatchGLES2);
-    CommandBufferGLES2::SetupDispatch(&DispatchGLES2);
-
-    DispatchGLES2.impl_Reset = &gles2_Reset;
-    DispatchGLES2.impl_Uninitialize = &gles2_Uninitialize;
-    DispatchGLES2.impl_HostApi = &gles2_HostApi;
-    DispatchGLES2.impl_TextureFormatSupported = &gles2_TextureFormatSupported;
-    DispatchGLES2.impl_DeviceCaps = &gles2_DeviceCaps;
-    DispatchGLES2.impl_NeedRestoreResources = &gles2_NeedRestoreResources;
-    DispatchGLES2.impl_ResumeRendering = &ResumeGLES2;
-    DispatchGLES2.impl_SuspendRendering = &SuspendGLES2;
-    DispatchGLES2.impl_InvalidateCache = &gles2_InvalidateCache;
-
-    SetDispatchTable(DispatchGLES2);
-
-    gles_check_GL_extensions();
-
-    InitializeRenderThreadGLES2((param.threadedRenderEnabled) ? param.threadedRenderFrameCount : 0);
-
-#if 0
-    glEnable(GL_DEBUG_OUTPUT);
-    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, 0, GL_TRUE);
-    glDebugMessageCallback(&_OGLErrorCallback, 0);
-#endif
-
-    stat_DIP = StatSet::AddStat("rhi'dip", "dip");
-    stat_DP = StatSet::AddStat("rhi'dp", "dp");
-    stat_DTL = StatSet::AddStat("rhi'dtl", "dtl");
-    stat_DTS = StatSet::AddStat("rhi'dts", "dts");
-    stat_DLL = StatSet::AddStat("rhi'dll", "dll");
-    stat_SET_PS = StatSet::AddStat("rhi'set-ps", "set-ps");
-    stat_SET_SS = StatSet::AddStat("rhi'set-ss", "set-ss");
-    stat_SET_TEX = StatSet::AddStat("rhi'set-tex", "set-tex");
-    stat_SET_CB = StatSet::AddStat("rhi'set-cb", "set-cb");
-    stat_SET_VB = StatSet::AddStat("rhi'set-vb", "set-vb");
-    stat_SET_IB = StatSet::AddStat("rhi'set-ib", "set-ib");
-}
-
 #elif defined(__DAVAENGINE_ANDROID__)
+void GL_APIENTRY android_gl_debug_callback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* message, const void* userdata)
+{
+    if ((message != nullptr) && (length > 1))
+    {
+        DAVA::Logger::Info("OpenGL debug message (%d): %s", length, message);
+    }
+}
+#endif
+
+void gles2_enable_debug_output()
+{
+#if ENABLE_DEBUG_OUTPUT
+    DVASSERT(_GLES2_IsDebugSupported);
+
+    DAVA::Logger::Error("Enabling OpenGL debug...");
+
+#if defined(__DAVAENGINE_WIN32__) || defined(__DAVAENGINE_ANDROID__)
+    GL_CALL(glEnable(GL_DEBUG_OUTPUT));
+    GL_CALL(glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, 0, GL_TRUE));
+    GL_CALL(glDebugMessageCallback(&gl_debug_callback, nullptr));    
+#else
+#error DEBUG_OUTPUT Not implemented for platform
+#endif
+
+#endif
+}
+//------------------------------------------------------------------------------
 
 void gles2_Initialize(const InitParam& param)
 {
-    _GLES2_AcquireContext = &android_gl_acquire_context;
-    _GLES2_ReleaseContext = &android_gl_release_context;
-
     _GLES2_DefaultFrameBuffer_Width = param.width;
     _GLES2_DefaultFrameBuffer_Height = param.height;
+    _GLES2_Default_FrameBuffer = param.defaultFrameBuffer ? static_cast<GLuint>(reinterpret_cast<intptr_t>(param.defaultFrameBuffer)) : 0;
 
+#if defined(__DAVAENGINE_WIN32__)
+    win32_gl_init(param);
+    _GLES2_AcquireContext = (param.acquireContextFunc) ? param.acquireContextFunc : &win32_gl_acquire_context;
+    _GLES2_ReleaseContext = (param.releaseContextFunc) ? param.releaseContextFunc : &win32_gl_release_context;    
+#elif defined(__DAVAENGINE_MACOS__)
+    macos_gl_init(param);
+    _GLES2_AcquireContext = (param.acquireContextFunc) ? param.acquireContextFunc : &macos_gl_acquire_context;
+    _GLES2_ReleaseContext = (param.releaseContextFunc) ? param.releaseContextFunc : &macos_gl_release_context;    
+#elif defined(__DAVAENGINE_IPHONE__)
+    ios_gl_init(param.window);
+    _GLES2_AcquireContext = (param.acquireContextFunc) ? param.acquireContextFunc : &ios_gl_acquire_context;
+    _GLES2_ReleaseContext = (param.releaseContextFunc) ? param.releaseContextFunc : &ios_gl_release_context;
+#elif defined(__DAVAENGINE_ANDROID__)
     android_gl_init(param.window);
+    _GLES2_AcquireContext = (param.acquireContextFunc) ? param.acquireContextFunc : &android_gl_acquire_context;
+    _GLES2_ReleaseContext = (param.releaseContextFunc) ? param.releaseContextFunc : &android_gl_release_context;                
+#endif
 
     if (param.maxVertexBufferCount)
         VertexBufferGLES2::Init(param.maxVertexBufferCount);
@@ -727,8 +526,6 @@ void gles2_Initialize(const InitParam& param)
     if (param.maxTextureCount)
         TextureGLES2::Init(param.maxTextureCount);
 
-    if (param.maxTextureSetCount)
-        InitTextreSetPool(param.maxTextureSetCount);
     if (param.maxSamplerStateCount)
         SamplerStateGLES2::Init(param.maxSamplerStateCount);
     if (param.maxPipelineStateCount)
@@ -739,25 +536,22 @@ void gles2_Initialize(const InitParam& param)
         RenderPassGLES2::Init(param.maxRenderPassCount);
     if (param.maxCommandBuffer)
         CommandBufferGLES2::Init(param.maxCommandBuffer);
-    if (param.maxPacketListCount)
-        InitPacketListPool(param.maxPacketListCount);
 
     uint32 ringBufferSize = 4 * 1024 * 1024;
     if (param.shaderConstRingBufferSize)
         ringBufferSize = param.shaderConstRingBufferSize;
     ConstBufferGLES2::InitializeRingBuffer(ringBufferSize);
 
-    _Inited = true;
-
-    Logger::Info("GL inited");
-    Logger::Info("  GL version   : %s", glGetString(GL_VERSION));
-    Logger::Info("  GPU vendor   : %s", glGetString(GL_VENDOR));
-    Logger::Info("  GPU          : %s", glGetString(GL_RENDERER));
-    Logger::Info("  GLSL version : %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
+    Logger::FrameworkDebug("GL initialized");
+    Logger::FrameworkDebug("  GL version   : %s", glGetString(GL_VERSION));
+    Logger::FrameworkDebug("  GPU vendor   : %s", glGetString(GL_VENDOR));
+    Logger::FrameworkDebug("  GPU          : %s", glGetString(GL_RENDERER));
+    Logger::FrameworkDebug("  GLSL version : %s", glGetString(GL_SHADING_LANGUAGE_VERSION));
 
     VertexBufferGLES2::SetupDispatch(&DispatchGLES2);
     IndexBufferGLES2::SetupDispatch(&DispatchGLES2);
     QueryBufferGLES2::SetupDispatch(&DispatchGLES2);
+    PerfQueryGLES2::SetupDispatch(&DispatchGLES2);
     TextureGLES2::SetupDispatch(&DispatchGLES2);
     PipelineStateGLES2::SetupDispatch(&DispatchGLES2);
     ConstBufferGLES2::SetupDispatch(&DispatchGLES2);
@@ -770,23 +564,22 @@ void gles2_Initialize(const InitParam& param)
     DispatchGLES2.impl_Uninitialize = &gles2_Uninitialize;
     DispatchGLES2.impl_HostApi = &gles2_HostApi;
     DispatchGLES2.impl_TextureFormatSupported = &gles2_TextureFormatSupported;
-    DispatchGLES2.impl_DeviceCaps = &gles2_DeviceCaps;
     DispatchGLES2.impl_NeedRestoreResources = &gles2_NeedRestoreResources;
-    DispatchGLES2.impl_ResumeRendering = &ResumeGLES2;
-    DispatchGLES2.impl_SuspendRendering = &SuspendGLES2;
     DispatchGLES2.impl_InvalidateCache = &gles2_InvalidateCache;
+    DispatchGLES2.impl_SyncCPUGPU = &gles2_SynchronizeCPUGPU;
+
+    DispatchGLES2.impl_InitContext = _GLES2_AcquireContext;
+    DispatchGLES2.impl_ValidateSurface = &gles2_CheckSurface;
+    DispatchGLES2.impl_FinishRendering = &gles2_Suspend;
 
     SetDispatchTable(DispatchGLES2);
 
-    gles_check_GL_extensions();
+    gles_check_GL_extensions();    
+    
 
-    InitializeRenderThreadGLES2((param.threadedRenderEnabled) ? param.threadedRenderFrameCount : 0);
-
-    #if 0
-    glEnable(GL_DEBUG_OUTPUT);
-    glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, 0, GL_TRUE);
-    glDebugMessageCallback(&_OGLErrorCallback, 0);
-    #endif
+#if ENABLE_DEBUG_OUTPUT
+    gles2_enable_debug_output();
+#endif
 
     stat_DIP = StatSet::AddStat("rhi'dip", "dip");
     stat_DP = StatSet::AddStat("rhi'dp", "dp");
@@ -799,11 +592,52 @@ void gles2_Initialize(const InitParam& param)
     stat_SET_CB = StatSet::AddStat("rhi'set-cb", "set-cb");
     stat_SET_VB = StatSet::AddStat("rhi'set-vb", "set-vb");
     stat_SET_IB = StatSet::AddStat("rhi'set-ib", "set-ib");
+
+    if (param.threadedRenderEnabled)
+        _GLES2_ReleaseContext();
 }
 
-#endif
-
 } // namespace rhi
+
+#define CASE_TO_STRING(x) case x: return #x;
+const char* glErrorToString(GLint error)
+{
+    switch (error)
+    {
+        CASE_TO_STRING(GL_NO_ERROR)
+        CASE_TO_STRING(GL_INVALID_ENUM)
+        CASE_TO_STRING(GL_INVALID_VALUE)
+        CASE_TO_STRING(GL_INVALID_OPERATION)
+        CASE_TO_STRING(GL_INVALID_FRAMEBUFFER_OPERATION)
+        CASE_TO_STRING(GL_OUT_OF_MEMORY)
+
+    default:
+        return "Unknown OpenGL error";
+    };
+}
+#undef CASE_TO_STRING
+
+GLint GetGLRenderTargetFormat(rhi::TextureFormat rhiFormat)
+{
+    switch (rhiFormat)
+    {
+    case rhi::TEXTURE_FORMAT_R8G8B8A8:
+        return GL_RGBA8;
+
+    case rhi::TEXTURE_FORMAT_R5G6B5:
+    {
+    #if defined(__DAVAENGINE_MACOS__) || defined(__DAVAENGINE_WINDOWS__)
+        return GL_RGB5;
+    #else
+        return GL_RGB565;
+    #endif
+    }
+
+    default:
+        DVASSERT(0, "Unsupported or unknown render target format specified");
+        return 0;
+    }
+}
 
 bool GetGLTextureFormat(rhi::TextureFormat rhiFormat, GLint* internalFormat, GLint* format, GLenum* type, bool* compressed)
 {
@@ -872,7 +706,7 @@ bool GetGLTextureFormat(rhi::TextureFormat rhiFormat, GLint* internalFormat, GLi
     case TEXTURE_FORMAT_A16R16G16B16:
         *internalFormat = GL_RGBA;
         *format = GL_RGBA;
-        *type = GL_HALF_FLOAT;
+        *type = GL_UNSIGNED_SHORT;
         *compressed = false;
         success = true;
         break;
@@ -880,14 +714,14 @@ bool GetGLTextureFormat(rhi::TextureFormat rhiFormat, GLint* internalFormat, GLi
     case TEXTURE_FORMAT_A32R32G32B32:
         *internalFormat = GL_RGBA;
         *format = GL_RGBA;
-        *type = GL_FLOAT;
+        *type = GL_UNSIGNED_INT;
         *compressed = false;
         success = true;
         break;
 
     case TEXTURE_FORMAT_DXT1:
-        *internalFormat = GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
-        *format = GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
+        *internalFormat = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+        *format = GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
         *type = GL_UNSIGNED_BYTE;
         *compressed = true;
         success = true;
@@ -1029,8 +863,57 @@ bool GetGLTextureFormat(rhi::TextureFormat rhiFormat, GLint* internalFormat, GLi
         success = true;
         break;
 
+    case TEXTURE_FORMAT_R16F:
+        *internalFormat = GL_R16F;
+        *format = GL_RED;
+        *type = GL_HALF_FLOAT;
+        *compressed = false;
+        success = true;
+        break;
+
+    case TEXTURE_FORMAT_RG16F:
+        *internalFormat = GL_RG16F;
+        *format = GL_RG;
+        *type = GL_HALF_FLOAT;
+        *compressed = false;
+        success = true;
+        break;
+
+    case TEXTURE_FORMAT_RGBA16F:
+        *internalFormat = GL_RGBA16F;
+        *format = GL_RGBA;
+        *type = GL_HALF_FLOAT;
+        *compressed = false;
+        success = true;
+        break;
+
+    case TEXTURE_FORMAT_R32F:
+        *internalFormat = GL_R32F;
+        *format = GL_RED;
+        *type = GL_FLOAT;
+        *compressed = false;
+        success = true;
+        break;
+
+    case TEXTURE_FORMAT_RG32F:
+        *internalFormat = GL_RG32F;
+        *format = GL_RG;
+        *type = GL_FLOAT;
+        *compressed = false;
+        success = true;
+        break;
+
+    case TEXTURE_FORMAT_RGBA32F:
+        *internalFormat = GL_RGBA32F;
+        *format = GL_RGBA;
+        *type = GL_FLOAT;
+        *compressed = false;
+        success = true;
+        break;
+
     default:
         success = false;
+        DVASSERT(0, "Unsupported or unknown texture format specified");
     }
 
     return success;

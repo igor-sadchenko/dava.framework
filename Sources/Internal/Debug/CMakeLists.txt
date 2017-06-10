@@ -1,9 +1,9 @@
+set( HPP_FILES *.h Private/*.h)
+set( CPP_FILES *.cpp Private/*.cpp)
+set( CPP_FILES_APPLE *.mm Private/*.mm)
+set( ERASE_FILES_MACOS  Private/UIAlertView_Modal.h
+                        Private/UIAlertView_Modal.mm 
+                        Private/UIDismissionHandlerAlertView.h 
+                        Private/UIDismissionHandlerAlertView.mm)
 
-if( MACOS )
-    set( ERASE_FILES  UIAlertView_Modal.h
-                      UIAlertView_Modal.m 
-                      UIDismissionHandlerAlertView.h 
-                      UIDismissionHandlerAlertView.mm )
-endif()
-
-define_source_files (PARENT_SCOPE GLOB_ERASE_FILES ${ERASE_FILES} )
+setup_main_module()

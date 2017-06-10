@@ -1,71 +1,115 @@
-/*==================================================================================
-    Copyright (c) 2008, binaryzebra
-    All rights reserved.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    * Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-    notice, this list of conditions and the following disclaimer in the
-    documentation and/or other materials provided with the distribution.
-    * Neither the name of the binaryzebra nor the
-    names of its contributors may be used to endorse or promote products
-    derived from this software without specific prior written permission.
-
-    THIS SOFTWARE IS PROVIDED BY THE binaryzebra AND CONTRIBUTORS "AS IS" AND
-    ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-    WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-    DISCLAIMED. IN NO EVENT SHALL binaryzebra BE LIABLE FOR ANY
-    DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-    (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-    LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-    ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-=====================================================================================*/
-
-
 #ifndef __DAVAENGINE_UI_STYLESHEET_SYSTEM_H__
 #define __DAVAENGINE_UI_STYLESHEET_SYSTEM_H__
 
 #include "Base/BaseTypes.h"
 #include "Base/FastName.h"
-#include "UIStyleSheetStructs.h"
+#include "UI/Styles/UIPriorityStyleSheet.h"
+#include "UI/Styles/UIStyleSheetPropertyDataBase.h"
+#include "UI/Styles/UIStyleSheetStructs.h"
+#include "UI/UISystem.h"
+#include "Base/RefPtr.h"
 
 namespace DAVA
 {
-
 class UIControl;
+class UIScreen;
+class UIScreenTransition;
 class UIStyleSheet;
 struct UIStyleSheetSelector;
 class VariantType;
 
+class UIStyleSheetSystemListener
+{
+public:
+    UIStyleSheetSystemListener()
+    {
+    }
+    virtual ~UIStyleSheetSystemListener()
+    {
+    }
+
+    virtual void OnStylePropertyChanged(UIControl* control, UIComponent* component, uint32 propertyIndex) = 0;
+};
+
+struct UIStyleSheetProcessDebugData
+{
+    UIStyleSheetProcessDebugData()
+    {
+        std::fill(propertySources.begin(), propertySources.end(), nullptr);
+    }
+
+    Vector<UIPriorityStyleSheet> styleSheets;
+    Array<const UIStyleSheet*, UIStyleSheetPropertyDataBase::STYLE_SHEET_PROPERTY_COUNT> propertySources;
+    UIStyleSheetPropertySet appliedProperties;
+};
+
 class UIStyleSheetSystem
+: public UISystem
 {
 public:
     UIStyleSheetSystem();
-    ~UIStyleSheetSystem();
+    ~UIStyleSheetSystem() override;
 
-    void ProcessControl(UIControl* control);
-    void AddGlobalClass(const FastName &clazz);
-    void RemoveGlobalClass(const FastName &clazz);
-    bool HasGlobalClass(const FastName &clazz) const;
+    void SetCurrentScreen(const RefPtr<UIScreen>& screen);
+    void SetCurrentScreenTransition(const RefPtr<UIScreenTransition>& screenTransition);
+    void SetPopupContainer(const RefPtr<UIControl>& popupContainer);
+    void SetListener(UIStyleSheetSystemListener* listener);
+
+    void AddGlobalClass(const FastName& clazz);
+    void RemoveGlobalClass(const FastName& clazz);
+    bool HasGlobalClass(const FastName& clazz) const;
     void SetGlobalTaggedClass(const FastName& tag, const FastName& clazz);
+    FastName GetGlobalTaggedClass(const FastName& tag) const;
     void ResetGlobalTaggedClass(const FastName& tag);
     void ClearGlobalClasses();
 
+    void ClearStats();
+    void DumpStats();
+
+    void SetDirty();
+    void CheckDirty();
+
+    void DebugControl(UIControl* control, UIStyleSheetProcessDebugData* debugData);
+    void ProcessControl(UIControl* control, bool styleSheetListChanged = false); //DON'T USE IT!
+
 private:
-    bool StyleSheetMatchesControl(const UIStyleSheet* styleSheet, UIControl* control);
-    bool SelectorMatchesControl(const UIStyleSheetSelector& selector, UIControl* control);
+    void Process(float32 elapsedTime) override;
+    void ForceProcessControl(float32 elapsedTime, UIControl* control) override;
+
+    void ProcessControlImpl(UIControl* control, int32 distanceFromDirty, bool styleSheetListChanged, bool recursively, bool dryRun, UIStyleSheetProcessDebugData* debugData);
+    void ProcessControlHierarhy(UIControl* root);
+
+    bool StyleSheetMatchesControl(const UIStyleSheet* styleSheet, const UIControl* control);
+    bool SelectorMatchesControl(const UIStyleSheetSelector& selector, const UIControl* control);
 
     template <typename CallbackType>
     void DoForAllPropertyInstances(UIControl* control, uint32 propertyIndex, const CallbackType& action);
 
     UIStyleSheetClassSet globalClasses;
+
+    uint64 statsTime = 0;
+    int32 statsProcessedControls = 0;
+    int32 statsMatches = 0;
+    int32 statsStyleSheetCount = 0;
+    bool dirty = false;
+    bool needUpdate = false;
+    RefPtr<UIScreen> currentScreen;
+    RefPtr<UIControl> popupContainer;
+    RefPtr<UIScreenTransition> currentScreenTransition;
+
+    UIStyleSheetSystemListener* listener = nullptr;
 };
 
+inline void UIStyleSheetSystem::SetDirty()
+{
+    dirty = true;
+}
+
+inline void UIStyleSheetSystem::CheckDirty()
+{
+    needUpdate = dirty;
+    dirty = false;
+}
 };
 
 #endif
